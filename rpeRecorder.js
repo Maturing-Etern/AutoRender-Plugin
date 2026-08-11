@@ -423,12 +423,16 @@ print(json.dumps(info, ensure_ascii=False))
         logger.warn(`[RPE] QQ 头像处理失败: ${err.message}`)
       }
       // 2. 写根目录 settings.txt（head_sculpture 指向头像文件的相对根目录路径——任务目录 file/head.png；头像失败时回退 file/head.png）
-      // player_name 不自动覆盖——昵称由用户在 settings.txt 里自己定义（rpe-settings 网页"玩家名"字段）
+      // player_name：用户 settings 里已填（非空）则保留，没填则默认用 QQ 昵称
       let txt = fs.readFileSync(settingsPath, 'utf-8')
       const headRel = taskDir ? (headPng ? path.relative(RPE_DIR, headPng).replace(/\\/g, '/') : 'file/head.png') : 'file/head.png'
       txt = txt.replace(/^head_sculpture:.*$/m, 'head_sculpture:' + headRel)
+      if (!/^player_name:\s*\S/m.test(txt)) {
+        if (/^player_name:/m.test(txt)) txt = txt.replace(/^player_name:.*$/m, `player_name:${nickname}`)
+        else txt += '\nplayer_name:' + nickname
+      }
       fs.writeFileSync(settingsPath, txt, 'utf-8')
-      logger.info(`[RPE] settings.txt 已写入 QQ 头像（UTF-8）`)
+      logger.info(`[RPE] settings.txt 已写入 QQ 头像 + 默认昵称（UTF-8）`)
     } catch (err) {
       logger.warn(`[RPE] 更新玩家信息失败: ${err.message}`)
     }
