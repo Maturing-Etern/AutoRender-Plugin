@@ -1,8 +1,8 @@
 @echo off
 setlocal enabledelayedexpansion
-REM 不 cd 到脚本目录！保持调用者的 cwd（bot 传任务目录 jobs/<taskId>/），
-REM 这样 settings.txt / file/ / temp/ / Output/ 都指向任务目录（并行隔离）
-REM 手动在 RPE Recorder 目录运行 render.bat 时 cwd 就是根目录，行为不变
+REM RPE Recorder 依赖根目录相对资源（FONT/translations/preference.json/shader/），
+REM 必须从根目录启动——settings.txt / file/ / temp/ / Output/ 统一用根目录（串行渲染）
+cd /d "%~dp0"
 
 REM ============================================================
 REM  RPE Recorder render script
@@ -61,32 +61,38 @@ if defined RPE_USE_TEMPLATE (
 REM Template mode: user-supplied settings.txt, only rewrite chart-related fields
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ErrorActionPreference='Stop';" ^
+  "$rdir=$env:RPE_REL_DIR; if(!$rdir){$rdir='file'};" ^
+  "$tdir=$env:RPE_TEMP_DIR; if(!$tdir){$tdir='temp'};" ^
+  "$odir=$env:RPE_OUT_DIR; if(!$odir){$odir='Output'};" ^
   "$f='settings.txt';" ^
   "$enc=New-Object System.Text.UTF8Encoding($false);" ^
   "$c=[System.IO.File]::ReadAllText((Resolve-Path $f), $enc);" ^
-  "$c=$c -replace '(?m)^file_dir:.*$', 'file_dir:file';" ^
-  "$c=$c -replace '(?m)^temp_dir:.*$', 'temp_dir:temp';" ^
-  "$c=$c -replace '(?m)^chart_name:.*$', ('chart_name:file/' + $env:CHART);" ^
-  "$c=$c -replace '(?m)^audio_name:.*$', ('audio_name:file/' + $env:AUDIO);" ^
-  "$c=$c -replace '(?m)^illustration_name:.*$', ('illustration_name:file/' + $env:PIC);" ^
+  "$c=$c -replace '(?m)^file_dir:.*$', ('file_dir:' + $rdir);" ^
+  "$c=$c -replace '(?m)^temp_dir:.*$', ('temp_dir:' + $tdir);" ^
+  "$c=$c -replace '(?m)^chart_name:.*$', ('chart_name:' + $rdir + '/' + $env:CHART);" ^
+  "$c=$c -replace '(?m)^audio_name:.*$', ('audio_name:' + $rdir + '/' + $env:AUDIO);" ^
+  "$c=$c -replace '(?m)^illustration_name:.*$', ('illustration_name:' + $rdir + '/' + $env:PIC);" ^
   "$outName = ($env:TITLE -replace '[\\\\/:*?<>|]', '_');" ^
-  "$c=$c -replace '(?m)^output_path:.*$', ('output_path:' + (Get-Location).Path + '/Output/' + $outName + '.mp4');" ^
+  "$c=$c -replace '(?m)^output_path:.*$', ('output_path:' + (Get-Location).Path + '/' + $odir + '/' + $outName + '.mp4');" ^
   "[System.IO.File]::WriteAllText((Resolve-Path $f), $c, $enc);" ^
   "Write-Output 'settings.txt updated (template mode)'"
 ) else (
 REM Full mode: rewrite all render params from env vars
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ErrorActionPreference='Stop';" ^
+  "$rdir=$env:RPE_REL_DIR; if(!$rdir){$rdir='file'};" ^
+  "$tdir=$env:RPE_TEMP_DIR; if(!$tdir){$tdir='temp'};" ^
+  "$odir=$env:RPE_OUT_DIR; if(!$odir){$odir='Output'};" ^
   "$f='settings.txt';" ^
   "$enc=New-Object System.Text.UTF8Encoding($false);" ^
   "$c=[System.IO.File]::ReadAllText((Resolve-Path $f), $enc);" ^
-  "$c=$c -replace '(?m)^file_dir:.*$', 'file_dir:file';" ^
-  "$c=$c -replace '(?m)^temp_dir:.*$', 'temp_dir:temp';" ^
-  "$c=$c -replace '(?m)^chart_name:.*$', ('chart_name:file/' + $env:CHART);" ^
-  "$c=$c -replace '(?m)^audio_name:.*$', ('audio_name:file/' + $env:AUDIO);" ^
-  "$c=$c -replace '(?m)^illustration_name:.*$', ('illustration_name:file/' + $env:PIC);" ^
+  "$c=$c -replace '(?m)^file_dir:.*$', ('file_dir:' + $rdir);" ^
+  "$c=$c -replace '(?m)^temp_dir:.*$', ('temp_dir:' + $tdir);" ^
+  "$c=$c -replace '(?m)^chart_name:.*$', ('chart_name:' + $rdir + '/' + $env:CHART);" ^
+  "$c=$c -replace '(?m)^audio_name:.*$', ('audio_name:' + $rdir + '/' + $env:AUDIO);" ^
+  "$c=$c -replace '(?m)^illustration_name:.*$', ('illustration_name:' + $rdir + '/' + $env:PIC);" ^
   "$outName = ($env:TITLE -replace '[\\\\/:*?<>|]', '_');" ^
-  "$c=$c -replace '(?m)^output_path:.*$', ('output_path:' + (Get-Location).Path + '/Output/' + $outName + '.mp4');" ^
+  "$c=$c -replace '(?m)^output_path:.*$', ('output_path:' + (Get-Location).Path + '/' + $odir + '/' + $outName + '.mp4');" ^
   "$c=$c -replace '(?m)^title:.*$', ('title:' + $env:TITLE);" ^
   "$c=$c -replace '(?m)^compose:.*$', ('compose:' + $env:COMPOSE);" ^
   "$c=$c -replace '(?m)^chart:.*$', ('chart:' + $env:CHARTER);" ^
