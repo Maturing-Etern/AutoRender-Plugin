@@ -456,6 +456,15 @@ print(json.dumps(info, ensure_ascii=False))
 
       // 1.5 自动写入发起人 QQ 头像 + 昵称（settings.txt 在根目录，头像在任务目录 file/，head_sculpture 写相对路径）
       await this.updatePlayerProfile(e, taskDir)
+      // 1.6 确保根目录 settings.txt 有 output_path 行（render.bat 只替换不追加——没有该行 RPE 输出到默认目录）
+      {
+        const rootSettings = path.join(RPE_DIR, 'settings.txt')
+        if (fs.existsSync(rootSettings)) {
+          let st = fs.readFileSync(rootSettings, 'utf-8')
+          if (!/^output_path:/m.test(st)) st += '\noutput_path:'
+          fs.writeFileSync(rootSettings, st, 'utf-8')
+        }
+      }
 
       // 2. 调用 render.bat（cwd=根目录，RPE 从根目录启动读根目录 settings.txt；文件路径用相对根目录的 jobs/<id>/file/）
       const meta = files.meta || {}
