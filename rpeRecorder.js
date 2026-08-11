@@ -23,7 +23,7 @@ const RENDER_BAT = path.join(RPE_DIR, 'render.bat')
 /** 渲染超时（分钟） */
 const RENDER_TIMEOUT_MIN = 30
 /** 轮询间隔（毫秒） */
-const POLL_INTERVAL = 2 * 60 * 1000
+const POLL_INTERVAL = 30 * 1000
 /** 等待文件超时（秒） */
 const WAIT_FILE_TIMEOUT = 120
 
@@ -499,6 +499,18 @@ print(json.dumps(info, ensure_ascii=False))
           await this.waitFileStable(newMp4)
           await this.sendVideo(e, newMp4)
           return
+        }
+
+        // RPE 进程检测：RPE Recorder.exe 全部退出且没输出 → 立即失败（不傻等 30 分钟）
+        try {
+          const { stdout: psOut } = await execAsync('tasklist /FI "IMAGENAME eq RPE Recorder.exe" /NH')
+          const rpeAlive = (psOut.match(/RPE Recorder\.exe/g) || []).length
+          if (rpeAlive === 0) {
+            throw new Error('RPE Recorder 未在运行（可能崩溃或找不到谱面/音频文件，请查看 RPE 窗口报错）')
+          }
+        } catch (err) {
+          if (String(err.message).includes('RPE Recorder 未在运行')) throw err
+          /* tasklist 本身失败则忽略，继续轮询 */
         }
 
         logger.info(`[RPE] 任务 ${taskId} 轮询中... 已耗时 ${Math.round((Date.now() - startTime) / 60000)} 分钟`)
