@@ -1,6 +1,8 @@
 @echo off
 setlocal enabledelayedexpansion
-cd /d "%~dp0"
+REM 不 cd 到脚本目录！保持调用者的 cwd（bot 传任务目录 jobs/<taskId>/），
+REM 这样 settings.txt / file/ / temp/ / Output/ 都指向任务目录（并行隔离）
+REM 手动在 RPE Recorder 目录运行 render.bat 时 cwd 就是根目录，行为不变
 
 REM ============================================================
 REM  RPE Recorder render script
@@ -62,11 +64,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$f='settings.txt';" ^
   "$enc=New-Object System.Text.UTF8Encoding($false);" ^
   "$c=[System.IO.File]::ReadAllText((Resolve-Path $f), $enc);" ^
-  "$c=$c -replace '(?m)^file_dir:.*$', ('file_dir:file/' + $env:RPE_TASK_DIR);" ^
-  "$c=$c -replace '(?m)^temp_dir:.*$', ('temp_dir:temp/' + $env:RPE_TASK_DIR);" ^
-  "$c=$c -replace '(?m)^chart_name:.*$', ('chart_name:file/' + $env:RPE_TASK_DIR + '/' + $env:CHART);" ^
-  "$c=$c -replace '(?m)^audio_name:.*$', ('audio_name:file/' + $env:RPE_TASK_DIR + '/' + $env:AUDIO);" ^
-  "$c=$c -replace '(?m)^illustration_name:.*$', ('illustration_name:file/' + $env:RPE_TASK_DIR + '/' + $env:PIC);" ^
+  "$c=$c -replace '(?m)^file_dir:.*$', 'file_dir:file';" ^
+  "$c=$c -replace '(?m)^temp_dir:.*$', 'temp_dir:temp';" ^
+  "$c=$c -replace '(?m)^chart_name:.*$', ('chart_name:file/' + $env:CHART);" ^
+  "$c=$c -replace '(?m)^audio_name:.*$', ('audio_name:file/' + $env:AUDIO);" ^
+  "$c=$c -replace '(?m)^illustration_name:.*$', ('illustration_name:file/' + $env:PIC);" ^
   "$outName = ($env:TITLE -replace '[\\\\/:*?<>|]', '_');" ^
   "$c=$c -replace '(?m)^output_path:.*$', ('output_path:' + (Get-Location).Path + '/Output/' + $outName + '.mp4');" ^
   "[System.IO.File]::WriteAllText((Resolve-Path $f), $c, $enc);" ^
@@ -78,11 +80,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$f='settings.txt';" ^
   "$enc=New-Object System.Text.UTF8Encoding($false);" ^
   "$c=[System.IO.File]::ReadAllText((Resolve-Path $f), $enc);" ^
-  "$c=$c -replace '(?m)^file_dir:.*$', ('file_dir:file/' + $env:RPE_TASK_DIR);" ^
-  "$c=$c -replace '(?m)^temp_dir:.*$', ('temp_dir:temp/' + $env:RPE_TASK_DIR);" ^
-  "$c=$c -replace '(?m)^chart_name:.*$', ('chart_name:file/' + $env:RPE_TASK_DIR + '/' + $env:CHART);" ^
-  "$c=$c -replace '(?m)^audio_name:.*$', ('audio_name:file/' + $env:RPE_TASK_DIR + '/' + $env:AUDIO);" ^
-  "$c=$c -replace '(?m)^illustration_name:.*$', ('illustration_name:file/' + $env:RPE_TASK_DIR + '/' + $env:PIC);" ^
+  "$c=$c -replace '(?m)^file_dir:.*$', 'file_dir:file';" ^
+  "$c=$c -replace '(?m)^temp_dir:.*$', 'temp_dir:temp';" ^
+  "$c=$c -replace '(?m)^chart_name:.*$', ('chart_name:file/' + $env:CHART);" ^
+  "$c=$c -replace '(?m)^audio_name:.*$', ('audio_name:file/' + $env:AUDIO);" ^
+  "$c=$c -replace '(?m)^illustration_name:.*$', ('illustration_name:file/' + $env:PIC);" ^
   "$outName = ($env:TITLE -replace '[\\\\/:*?<>|]', '_');" ^
   "$c=$c -replace '(?m)^output_path:.*$', ('output_path:' + (Get-Location).Path + '/Output/' + $outName + '.mp4');" ^
   "$c=$c -replace '(?m)^title:.*$', ('title:' + $env:TITLE);" ^
@@ -109,5 +111,5 @@ if errorlevel 1 (
 echo [2/2] launching RPE Recorder.exe ...
 start "" "%~dp0RPE Recorder.exe"
 
-echo [OK] render started, output dir: %~dp0Output
+echo [OK] render started, output dir: %cd%\Output
 exit /b 0
