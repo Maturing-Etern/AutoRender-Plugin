@@ -407,55 +407,47 @@ async function parsePez(file) {
   const entries = Object.keys(zip.files).filter(n => !zip.files[n].dir);
   const basenames = entries.map(n => n.split("/").pop());
 
-  let info = null;
+  let info = {};
 
-  /* 1. Look for info.* files (info.txt, info.csv, etc.) */
+  /* 1. Parse chart.json META first (has name/composer/charter/level) */
+  const jsonFiles = entries.filter(n => n.toLowerCase().endsWith(".json"));
+  for (const name of jsonFiles) {
+    try {
+      const text = await zip.files[name].async("string");
+      const meta = parseChartJson(text);
+      if (meta) { Object.assign(info, meta); break; }
+    } catch {}
+  }
+
+  /* 2. Parse info.txt/info.csv (has Song/Picture/Chart file refs + metadata) */
   const infoFiles = entries.filter(n => {
     const base = n.split("/").pop().toLowerCase();
     return base.includes("info") && (base.endsWith(".txt") || base.endsWith(".csv"));
   });
-
   for (const name of infoFiles) {
-    const text = await zip.files[name].async("string");
-    info = parseInfoText(text, name);
-    if (info) break;
-  }
-
-  /* 2. Look for chart.json and parse META */
-  if (!info) {
-    const chartFiles = entries.filter(n => n.toLowerCase().endsWith("chart.json") || n.toLowerCase() === "chart.json");
-    for (const name of chartFiles) {
+    try {
       const text = await zip.files[name].async("string");
-      info = parseChartJson(text);
-      if (info) break;
-    }
+      const txtInfo = parseInfoText(text, name);
+      if (txtInfo) { Object.assign(info, txtInfo); break; }
+    } catch {}
   }
 
-  /* 3. Any .json with META */
-  if (!info) {
-    const jsonFiles = entries.filter(n => n.toLowerCase().endsWith(".json"));
-    for (const name of jsonFiles) {
-      const text = await zip.files[name].async("string");
-      info = parseChartJson(text);
-      if (info) break;
-    }
-  }
-
-  /* 4. Any .txt / .csv */
-  if (!info) {
+  /* 3. Fallback: any .txt / .csv */
+  if (!Object.keys(info).length) {
     const anyText = entries.filter(n => {
       const base = n.split("/").pop().toLowerCase();
       return base.endsWith(".txt") || base.endsWith(".csv");
     });
     for (const name of anyText) {
-      const text = await zip.files[name].async("string");
-      info = parseInfoText(text, name);
-      if (info) break;
+      try {
+        const text = await zip.files[name].async("string");
+        const txtInfo = parseInfoText(text, name);
+        if (txtInfo) { Object.assign(info, txtInfo); break; }
+      } catch {}
     }
   }
 
-  /* 5. Auto-detect file names by extension if not already set */
-  if (!info) info = {};
+  /* 4. Auto-detect file names by extension if not already set */
   if (!info.chart_name) {
     const chart = basenames.find(n => n.toLowerCase().endsWith(".json"));
     if (chart) info.chart_name = chart;
@@ -490,7 +482,7 @@ function parseInfoText(text, filename) {
 
     /* Check if first row is a header */
     const header = rows[0].map(h => h.toLowerCase());
-    const keyMap = { title: ["name","title","曲名","歌名"], level: ["level","difficulty","等级","难度"], composer: ["composer","artist","music","曲师","画师"], charter: ["charter","designer","mapper","谱师","谱面"], chart_name: ["chart","谱面文件"], audio_name: ["song","audio","音频","音乐文件"], illustration_name: ["picture","image","illustration","插图","图片"] };
+    const keyMap = { title: ["name","title","曲名","歌名"], level: ["level","difficulty","等级","难度"], composer: ["composer","artist","music","曲师","画师"], charter: ["charter","designer","mapper","谱师","谱面"], chart_name: ["chart","谱面文件"], audio_name: ["song","audio","音频","音乐文件"], illustration_name: ["picture","image","background","bg","插图","图片"] };
 
     let foundAny = false;
     for (const [field, aliases] of Object.entries(keyMap)) {
@@ -522,7 +514,7 @@ function parseInfoText(text, filename) {
     charter:  ["charter", "designer", "mapper", "chartdesigner", "chart designer", "谱师", "谱面", "制谱"],
     chart_name:         ["chart", "chartpath", "chart path", "谱面文件"],
     audio_name:         ["song", "audio", "audiopath", "audio path", "音频", "音乐文件"],
-    illustration_name:  ["picture", "image", "illustration", "illustrationpath", "插图", "图片"],
+    illustration_name:  ["picture", "image", "background", "illustrationpath", "bg", "插图", "图片"],
   };
 
   for (const line of lines) {
@@ -558,7 +550,7 @@ function parseChartJson(text) {
       charter:  ["charter", "designer", "mapper", "chartDesigner"],
       chart_name:         ["chart", "chartPath", "chartFile"],
       audio_name:         ["song", "audio", "audioPath", "audioFile", "musicFile"],
-      illustration_name:  ["picture", "image", "illustration", "illustrationPath", "background"],
+      illustration_name:  ["background", "picture", "image", "illustrationPath", "bg", "backgroundPath"],
     };
 
     for (const [field, keys] of Object.entries(fields)) {
