@@ -76,6 +76,18 @@
             <label class="q-label" for="f-charter">谱师</label>
             <input class="form-input" id="f-charter" type="text" placeholder="谱师名（选填）" />
           </div>
+          <div class="question-item">
+            <label class="q-label" for="f-chart">谱面文件 <span class="q-hint-inline">.json</span></label>
+            <input class="form-input" id="f-chart" type="text" placeholder="chart.json" />
+          </div>
+          <div class="question-item">
+            <label class="q-label" for="f-audio">音频文件 <span class="q-hint-inline">.mp3</span></label>
+            <input class="form-input" id="f-audio" type="text" placeholder="audio.mp3" />
+          </div>
+          <div class="question-item">
+            <label class="q-label" for="f-illust">插图文件 <span class="q-hint-inline">.png/.jpg</span></label>
+            <input class="form-input" id="f-illust" type="text" placeholder="illustration.png" />
+          </div>
         </div>
       </div>
 
@@ -252,6 +264,9 @@ function genSettings() {
   const level = val("f-level");
   const composer = val("f-composer");
   const charter = val("f-charter");
+  const chartName = val("f-chart") || "chart.json";
+  const audioName = val("f-audio") || "audio.mp3";
+  const illustName = val("f-illust") || "illustration.png";
 
   const lines = [
     "fps:" + fps,
@@ -268,9 +283,9 @@ function genSettings() {
     "level:" + level,
     "composer:" + composer,
     "charter:" + charter,
-    "chart_name:chart.json",
-    "audio_name:audio.mp3",
-    "illustration_name:illustration.png",
+    "chart_name:" + chartName,
+    "audio_name:" + audioName,
+    "illustration_name:" + illustName,
     "file_dir:file",
     "temp_dir:temp",
   ];
@@ -369,9 +384,12 @@ async function handleFile(file) {
     if (info.level)    document.getElementById("f-level").value = info.level;
     if (info.composer) document.getElementById("f-composer").value = info.composer;
     if (info.charter)  document.getElementById("f-charter").value = info.charter;
+    if (info.chart_name)        document.getElementById("f-chart").value = info.chart_name;
+    if (info.audio_name)        document.getElementById("f-audio").value = info.audio_name;
+    if (info.illustration_name) document.getElementById("f-illust").value = info.illustration_name;
 
-    const filled = [info.title, info.level, info.composer, info.charter].filter(Boolean).length;
-    status.textContent = "已填充 " + filled + " 项：" + [info.title, info.level, info.composer, info.charter].filter(Boolean).join(" / ");
+    const filled = [info.title, info.level, info.composer, info.charter, info.chart_name, info.audio_name, info.illustration_name].filter(Boolean).length;
+    status.textContent = "已填充 " + filled + " 项";
     status.className = "drop-status success";
     showToast("谱面信息已自动填充", "success");
 
@@ -386,7 +404,10 @@ async function handleFile(file) {
 /* ── Parse .pez (ZIP) ─────────────────────────────── */
 async function parsePez(file) {
   const zip = await JSZip.loadAsync(file);
-  const entries = Object.keys(zip.files);
+  const entries = Object.keys(zip.files).filter(n => !zip.files[n].dir);
+  const basenames = entries.map(n => n.split("/").pop());
+
+  let info = null;
 
   /* 1. Look for info.* files (info.txt, info.csv, etc.) */
   const infoFiles = entries.filter(n => {
@@ -396,38 +417,59 @@ async function parsePez(file) {
 
   for (const name of infoFiles) {
     const text = await zip.files[name].async("string");
-    const info = parseInfoText(text, name);
-    if (info) return info;
+    info = parseInfoText(text, name);
+    if (info) break;
   }
 
   /* 2. Look for chart.json and parse META */
-  const chartFiles = entries.filter(n => n.toLowerCase().endsWith("chart.json") || n.toLowerCase() === "chart.json");
-  for (const name of chartFiles) {
-    const text = await zip.files[name].async("string");
-    const info = parseChartJson(text);
-    if (info) return info;
+  if (!info) {
+    const chartFiles = entries.filter(n => n.toLowerCase().endsWith("chart.json") || n.toLowerCase() === "chart.json");
+    for (const name of chartFiles) {
+      const text = await zip.files[name].async("string");
+      info = parseChartJson(text);
+      if (info) break;
+    }
   }
 
   /* 3. Any .json with META */
-  const jsonFiles = entries.filter(n => n.toLowerCase().endsWith(".json"));
-  for (const name of jsonFiles) {
-    const text = await zip.files[name].async("string");
-    const info = parseChartJson(text);
-    if (info) return info;
+  if (!info) {
+    const jsonFiles = entries.filter(n => n.toLowerCase().endsWith(".json"));
+    for (const name of jsonFiles) {
+      const text = await zip.files[name].async("string");
+      info = parseChartJson(text);
+      if (info) break;
+    }
   }
 
-  /* 4. Any .txt / .csv with info in name */
-  const anyText = entries.filter(n => {
-    const base = n.split("/").pop().toLowerCase();
-    return base.endsWith(".txt") || base.endsWith(".csv");
-  });
-  for (const name of anyText) {
-    const text = await zip.files[name].async("string");
-    const info = parseInfoText(text, name);
-    if (info) return info;
+  /* 4. Any .txt / .csv */
+  if (!info) {
+    const anyText = entries.filter(n => {
+      const base = n.split("/").pop().toLowerCase();
+      return base.endsWith(".txt") || base.endsWith(".csv");
+    });
+    for (const name of anyText) {
+      const text = await zip.files[name].async("string");
+      info = parseInfoText(text, name);
+      if (info) break;
+    }
   }
 
-  return null;
+  /* 5. Auto-detect file names by extension if not already set */
+  if (!info) info = {};
+  if (!info.chart_name) {
+    const chart = basenames.find(n => n.toLowerCase().endsWith(".json"));
+    if (chart) info.chart_name = chart;
+  }
+  if (!info.audio_name) {
+    const audio = basenames.find(n => /\.(mp3|ogg|wav|flac|m4a)$/i.test(n));
+    if (audio) info.audio_name = audio;
+  }
+  if (!info.illustration_name) {
+    const img = basenames.find(n => /\.(png|jpg|jpeg|bmp|webp)$/i.test(n));
+    if (img) info.illustration_name = img;
+  }
+
+  return Object.keys(info).length ? info : null;
 }
 
 /* ── Parse info.txt / info.csv ─────────────────────── */
@@ -448,7 +490,7 @@ function parseInfoText(text, filename) {
 
     /* Check if first row is a header */
     const header = rows[0].map(h => h.toLowerCase());
-    const keyMap = { title: ["name","title","song","曲名","歌名"], level: ["level","difficulty","等级","难度"], composer: ["composer","artist","music","曲师","画师"], charter: ["charter","designer","mapper","谱师","谱面"] };
+    const keyMap = { title: ["name","title","曲名","歌名"], level: ["level","difficulty","等级","难度"], composer: ["composer","artist","music","曲师","画师"], charter: ["charter","designer","mapper","谱师","谱面"], chart_name: ["chart","谱面文件"], audio_name: ["song","audio","音频","音乐文件"], illustration_name: ["picture","image","illustration","插图","图片"] };
 
     let foundAny = false;
     for (const [field, aliases] of Object.entries(keyMap)) {
@@ -474,10 +516,13 @@ function parseInfoText(text, filename) {
 
   /* Key:value mode */
   const keyMap = {
-    title:    ["name", "title", "song", "songname", "song name", "曲名", "歌名", "歌曲名"],
+    title:    ["name", "title", "songname", "song name", "曲名", "歌名", "歌曲名"],
     level:    ["level", "difficulty", "diff", "等级", "难度"],
     composer: ["composer", "artist", "music", "musicby", "music by", "曲师", "画师", "作曲", "音乐"],
     charter:  ["charter", "designer", "mapper", "chartdesigner", "chart designer", "谱师", "谱面", "制谱"],
+    chart_name:         ["chart", "chartpath", "chart path", "谱面文件"],
+    audio_name:         ["song", "audio", "audiopath", "audio path", "音频", "音乐文件"],
+    illustration_name:  ["picture", "image", "illustration", "illustrationpath", "插图", "图片"],
   };
 
   for (const line of lines) {
@@ -507,10 +552,13 @@ function parseChartJson(text) {
 
     const info = {};
     const fields = {
-      title:    ["name", "title", "song", "songName"],
+      title:    ["name", "title", "songName"],
       level:    ["level", "difficulty", "diff"],
       composer: ["composer", "artist", "music", "musicBy"],
       charter:  ["charter", "designer", "mapper", "chartDesigner"],
+      chart_name:         ["chart", "chartPath", "chartFile"],
+      audio_name:         ["song", "audio", "audioPath", "audioFile", "musicFile"],
+      illustration_name:  ["picture", "image", "illustration", "illustrationPath", "background"],
     };
 
     for (const [field, keys] of Object.entries(fields)) {
