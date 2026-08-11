@@ -88,6 +88,10 @@
             <label class="q-label" for="f-illust">插图文件 <span class="q-hint-inline">.png/.jpg</span></label>
             <input class="form-input" id="f-illust" type="text" placeholder="illustration.png" />
           </div>
+          <div class="question-item">
+            <label class="q-label" for="f-player">玩家名</label>
+            <input class="form-input" id="f-player" type="text" placeholder="视频里显示的名字（不填默认 QQ 昵称）" />
+          </div>
         </div>
       </div>
 
@@ -269,6 +273,7 @@ function genSettings() {
   const chartName = val("f-chart") || "chart.json";
   const audioName = val("f-audio") || "audio.mp3";
   const illustName = val("f-illust") || "illustration.png";
+  const playerName = val("f-player");
 
   const lines = [
     "fps:" + fps,
@@ -292,6 +297,8 @@ function genSettings() {
     "illustration_name:" + filePrefixed(illustName),
     "file_dir:file",
     "temp_dir:temp",
+    // 玩家名：填了才输出（不填 bot 端默认用 QQ 昵称）
+    ...(playerName ? ["player_name:" + playerName] : []),
   ];
 
   const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
