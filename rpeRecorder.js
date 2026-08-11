@@ -372,6 +372,14 @@ print(json.dumps(info, ensure_ascii=False))
         if (m) meta[m[1]] = m[2].trim()
       }
     }
+    // 从 chart.json META 补 duration（info.txt 常没有 Length——end_second 需要歌曲时长）
+    if (!meta.Length && info.chart) {
+      try {
+        const cj = JSON.parse(fs.readFileSync(path.join(destDir, info.chart), 'utf-8'))
+        const mm = cj.META || cj.meta || cj.info || cj
+        if (mm?.duration != null) meta.Length = String(mm.duration)
+      } catch { /* ignore */ }
+    }
     return { ...info, meta }
   }
 
@@ -397,6 +405,7 @@ print(json.dumps(info, ensure_ascii=False))
       const taskFileDir = taskDir ? path.join(taskDir, 'file') : FILE_DIR
       if (!fs.existsSync(taskFileDir)) fs.mkdirSync(taskFileDir, { recursive: true })
       const avatarUrl = `https://q1.qlogo.cn/g?b=qq&nk=${uin}&s=640`
+      let headPng = ''
       try {
         const tmpPath = path.join(taskFileDir, 'head.tmp')
         await Bot.download(avatarUrl, tmpPath)
@@ -407,15 +416,15 @@ print(json.dumps(info, ensure_ascii=False))
         const finalHead = path.join(taskFileDir, `head.${headExt}`)
         if (finalHead !== tmpPath) fs.renameSync(tmpPath, finalHead)
         // 统一转 png（128x128 + rgba）
-        const headPng = path.join(taskFileDir, 'head.png')
+        headPng = path.join(taskFileDir, 'head.png')
         await execAsync(`"${path.join(RPE_DIR, 'ffmpeg.exe')}" -y -i "${finalHead}" -vf "scale=128:128" -pix_fmt rgba "${headPng}"`, { timeout: 30000 })
         logger.info(`[RPE] QQ 头像已就绪（head.png）: uin=${uin}`)
       } catch (err) {
         logger.warn(`[RPE] QQ 头像处理失败: ${err.message}`)
       }
-      // 2. 写根目录 settings.txt（head_sculpture 指向头像文件的相对根目录路径——任务目录 file/head.png）
+      // 2. 写根目录 settings.txt（head_sculpture 指向头像文件的相对根目录路径——任务目录 file/head.png；头像失败时回退 file/head.png）
       let txt = fs.readFileSync(settingsPath, 'utf-8')
-      const headRel = taskDir ? path.relative(RPE_DIR, headPng).replace(/\\/g, '/') : 'file/head.png'
+      const headRel = taskDir ? (headPng ? path.relative(RPE_DIR, headPng).replace(/\\/g, '/') : 'file/head.png') : 'file/head.png'
       txt = txt.replace(/^head_sculpture:.*$/m, 'head_sculpture:' + headRel)
       txt = txt.replace(/^player_name:.*$/m, `player_name:${nickname}`)
       fs.writeFileSync(settingsPath, txt, 'utf-8')
@@ -450,6 +459,16 @@ print(json.dumps(info, ensure_ascii=False))
       const relFileDir = path.relative(RPE_DIR, taskFileDir).replace(/\\/g, '/')
       const relTempDir = path.relative(RPE_DIR, taskTempDir).replace(/\\/g, '/')
       const relOutDir = path.relative(RPE_DIR, taskOutputDir).replace(/\\/g, '/')
+      // end_second：模板模式读用户 settings 的值；0/空时用歌曲长度（避免 end_second:0 导致音频合成失败）
+      let endSec = parsedSet?.end || meta.Length || '180'
+      if (useTemplate) {
+        try {
+          const st = fs.readFileSync(path.join(RPE_DIR, 'settings.txt'), 'utf-8')
+          const m = st.match(/^end_second:\s*([\d.]+)/m)
+          const v = m ? Number(m[1]) : 0
+          if (v > 0) endSec = String(v)
+        } catch { /* 读不到就用歌曲长度 */ }
+      }
       const batEnv = {
         ...process.env,
         RPE_TITLE: songName,
@@ -470,7 +489,7 @@ print(json.dumps(info, ensure_ascii=False))
         RPE_VIDEO_QUALITY: parsedSet?.videoQuality || '30',
         RPE_AUDIO_BITRATE: parsedSet?.audioBitrate || '320',
         RPE_BEGIN: parsedSet?.begin || '0',
-        RPE_END: parsedSet?.end || meta.Length || '180',
+        RPE_END: endSec,
         RPE_ADD_OFFSET: parsedSet?.addOffset || '70',
         // settings.txt 模板模式：render.bat 只重写谱面相关字段（file_dir/temp_dir/illustration/chart/audio/output_path）
         RPE_USE_TEMPLATE: useTemplate ? '1' : '',
