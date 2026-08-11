@@ -1,7 +1,8 @@
 @echo off
-setlocal enabledelayedexpansion
-REM RPE Recorder 依赖根目录相对资源（FONT/translations/preference.json/shader/），
-REM 必须从根目录启动——settings.txt / file/ / temp/ / Output/ 统一用根目录（串行渲染）
+REM NOT enabledelayedexpansion: would break "!" chars inside powershell -Command (e.g. if(!$rdir))
+setlocal
+REM Run from RPE Recorder root dir (needs relative resources: FONT/translations/preference.json/shader/)
+REM settings.txt / file/ / temp/ / Output/ all under root dir (serial render mode)
 cd /d "%~dp0"
 
 REM ============================================================
