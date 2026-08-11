@@ -74,6 +74,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$c=$c -replace '(?m)^illustration_name:.*$', ('illustration_name:' + $rdir + '/' + $env:PIC);" ^
   "$outName = ($env:TITLE -replace '[\\\\/:*?<>|]', '_');" ^
   "$c=$c -replace '(?m)^output_path:.*$', ('output_path:' + (Get-Location).Path + '/' + $odir + '/' + $outName + '.mp4');" ^
+  "$c=$c -replace '(?m)^end_second:.*$', ('end_second:' + $env:RPE_END);" ^
   "[System.IO.File]::WriteAllText((Resolve-Path $f), $c, $enc);" ^
   "Write-Output 'settings.txt updated (template mode)'"
 ) else (
