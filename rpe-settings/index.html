@@ -254,6 +254,8 @@ function genSettings() {
   const ab = document.querySelector('input[name="ab"]:checked').value;
 
   const val = id => (document.getElementById(id).value || "").trim();
+  /* 文件名补 file/ 前缀（RPE Recorder 官方格式：相对路径，避免重复加） */
+  const filePrefixed = n => /^(file|temp|queue)([\\/])/i.test(n) ? n : "file/" + n;
   const quality = val("f-quality");
   const begin = val("f-begin");
   const end = val("f-end") || "0";
@@ -280,12 +282,14 @@ function genSettings() {
     "note_scale:" + ns,
     "back_dim:" + bd,
     "title:" + title,
-    "level:" + level,
-    "composer:" + composer,
-    "charter:" + charter,
-    "chart_name:" + chartName,
-    "audio_name:" + audioName,
-    "illustration_name:" + illustName,
+    "difficulty_text:" + level,
+    "level:" + (level.match(/(\d+(?:\.\d+)?)/) || [,""])[1],
+    "grade:" + (level.match(/^(EZ|HD|IN|AT|SP)/i) || [,""])[1]?.toUpperCase(),
+    "compose:" + composer,
+    "chart:" + charter,
+    "chart_name:" + filePrefixed(chartName),
+    "audio_name:" + filePrefixed(audioName),
+    "illustration_name:" + filePrefixed(illustName),
     "file_dir:file",
     "temp_dir:temp",
   ];
