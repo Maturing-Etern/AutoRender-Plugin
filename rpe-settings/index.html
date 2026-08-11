@@ -295,13 +295,15 @@ function genSettings() {
   ];
 
   const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
+  a.href = url;
   a.download = "settings.txt";
   document.body.appendChild(a);
   a.click();
   a.remove();
-  URL.revokeObjectURL(a.href);
+  /* 延迟释放，避免个别浏览器在下载开始前就失效导致文件名回退 */
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 
   showToast("settings.txt 已生成", "success");
 
