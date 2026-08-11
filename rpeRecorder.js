@@ -687,7 +687,7 @@ print(json.dumps(info, ensure_ascii=False))
     // 优先同名，否则取最新修改的
     const match = newFiles.find(f => f.startsWith(songName)) ||
       newFiles.sort((a, b) => fs.statSync(path.join(outputDir, b)).mtimeMs - fs.statSync(path.join(outputDir, a)).mtimeMs)[0]
-    return path.join(OUTPUT_DIR, match)
+    return path.join(outputDir, match)
   }
 
   /** 等待文件大小稳定（渲染完成写入完毕） */
