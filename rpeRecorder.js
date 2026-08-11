@@ -31,8 +31,8 @@ const WAIT_FILE_TIMEOUT = 120
 let activeRenders = 0
 /** 渲染任务工作目录（并行隔离：jobs/<taskId>/{file,temp,Output,settings.txt}） */
 const JOBS_DIR = path.join(RPE_DIR, 'jobs')
-/** 最大并行渲染数 */
-const MAX_PARALLEL = 2
+/** 最大并行渲染数（根目录模式必须串行——RPE Recorder 只读根目录 settings/file） */
+const MAX_PARALLEL = 1
 /** 渲染队列：{ e, files, useTemplate, taskId, taskDir }（多人请求排队，最多 N 个并行） */
 const renderQueue = []
 /** .set 预设解析出的渲染参数（渲染时传给 render.bat） */
@@ -256,16 +256,9 @@ export class rpeRecorder extends plugin {
       logger.info(`[RPE] 已下载 .pez (${dl.buffer?.length || '?'} bytes)`)
       e.reply(`收到谱面包 ${fileName}（${((dl.buffer?.length || 0) / 1024 / 1024).toFixed(1)}MB），开始渲染`)
 
-      // 2. 解压 .pez 到任务专属目录（并行隔离：jobs/<taskId>/file/——file/temp 各任务独立）
+      // 2. 入队（解压挪到 render() 时——settings.txt 在根目录，谱面文件在任务目录 jobs/<id>/file/，串行渲染）
       const taskId = String(Date.now())
-      const taskDir = path.join(JOBS_DIR, taskId)
-      const taskFileDir = path.join(taskDir, 'file')
-      fs.mkdirSync(taskFileDir, { recursive: true })
-      const extracted = await this.extractPez(pezPath, taskFileDir)
-      logger.info(`[RPE] 解压完成: ${JSON.stringify(extracted)} 任务=${taskId}`)
-
-      // 3. 加入渲染队列（最多 MAX_PARALLEL 个并行，其余排队）
-      renderQueue.push({ e, files: extracted, useTemplate: settingsTemplate, taskId, taskDir })
+      renderQueue.push({ e, pezPath, useTemplate: settingsTemplate, taskId })
       if (activeRenders >= MAX_PARALLEL) {
         e.reply(`已加入渲染队列（前面还有 ${renderQueue.length} 个任务），完成后自动发送视频`)
       } else {
@@ -279,12 +272,12 @@ export class rpeRecorder extends plugin {
     }
   }
 
-  /** 渲染队列消费：活跃数 < MAX_PARALLEL 时启动任务（并行），完成后自动继续 */
+  /** 渲染队列消费：活跃数 < MAX_PARALLEL 时启动任务（串行），完成后自动继续 */
   async processQueue() {
     while (activeRenders < MAX_PARALLEL && renderQueue.length > 0) {
       const task = renderQueue.shift()
       activeRenders++
-      this.render(task.e, task.files, task.useTemplate, task.taskId, task.taskDir)
+      this.render(task.e, task.pezPath, task.useTemplate, task.taskId)
         .finally(() => {
           activeRenders--
           this.processQueue()
@@ -382,10 +375,11 @@ print(json.dumps(info, ensure_ascii=False))
     return { ...info, meta }
   }
 
-  /** 自动写入发起人 QQ 头像 + 昵称到任务目录 settings.txt（head_sculpture / player_name） */
+  /** 自动写入发起人 QQ 头像 + 昵称到根目录 settings.txt（head_sculpture / player_name，头像在任务目录 file/） */
   async updatePlayerProfile(e, taskDir = '') {
     const userId = String(e.user_id)
-    const settingsPath = taskDir ? path.join(taskDir, 'settings.txt') : path.join(RPE_DIR, 'settings.txt')
+    // settings.txt 固定根目录（RPE Recorder 从根目录启动读取）
+    const settingsPath = path.join(RPE_DIR, 'settings.txt')
     if (!fs.existsSync(settingsPath)) return
     try {
       // 0. 先拿 uin（数字 QQ）+ 昵称——qlogo 头像 url 需要数字 uin（e.user_id 可能是 uid u_ 开头）
@@ -419,9 +413,10 @@ print(json.dumps(info, ensure_ascii=False))
       } catch (err) {
         logger.warn(`[RPE] QQ 头像处理失败: ${err.message}`)
       }
-      // 2. 写 settings.txt（head_sculpture 指向 file/head.png——英文名根目录）
+      // 2. 写根目录 settings.txt（head_sculpture 指向头像文件的相对根目录路径——任务目录 file/head.png）
       let txt = fs.readFileSync(settingsPath, 'utf-8')
-      txt = txt.replace(/^head_sculpture:.*$/m, 'head_sculpture:file/head.png')
+      const headRel = taskDir ? path.relative(RPE_DIR, headPng).replace(/\\/g, '/') : 'file/head.png'
+      txt = txt.replace(/^head_sculpture:.*$/m, 'head_sculpture:' + headRel)
       txt = txt.replace(/^player_name:.*$/m, `player_name:${nickname}`)
       fs.writeFileSync(settingsPath, txt, 'utf-8')
       logger.info(`[RPE] settings.txt 已写入 QQ 头像/昵称（UTF-8）`)
@@ -430,29 +425,31 @@ print(json.dumps(info, ensure_ascii=False))
     }
   }
 
-  /** 渲染主流程：调 render.bat + 轮询 Output 目录 / 进程状态 */
-  async render(e, files, useTemplate = false, taskId = '', taskDir = '') {
+  /** 渲染主流程：settings.txt 在根目录，谱面文件在任务目录 jobs/<taskId>/{file,temp,Output}（相对路径指向），RPE 从根目录启动 */
+  async render(e, pezPath, useTemplate = false, taskId = '') {
     try {
-      // 0. 任务工作目录（并行隔离：jobs/<taskId>/{file,temp,Output,settings.txt}）
-      if (!taskDir) {
-        taskDir = path.join(JOBS_DIR, taskId)
-        fs.mkdirSync(path.join(taskDir, 'file'), { recursive: true })
-      }
-      const taskSettings = path.join(taskDir, 'settings.txt')
+      // 0. 任务工作目录（jobs/<taskId>/{file,temp,Output}——谱面文件独立目录，settings.txt 固定根目录）
+      const taskDir = path.join(JOBS_DIR, taskId)
+      const taskFileDir = path.join(taskDir, 'file')
+      const taskTempDir = path.join(taskDir, 'temp')
       const taskOutputDir = path.join(taskDir, 'Output')
-      fs.mkdirSync(path.join(taskDir, 'temp'), { recursive: true })
+      fs.mkdirSync(taskFileDir, { recursive: true })
+      fs.mkdirSync(taskTempDir, { recursive: true })
       fs.mkdirSync(taskOutputDir, { recursive: true })
 
-      // 1. 复制全局 settings.txt 到任务目录（渲染参数基础——并行时各自独立）
-      const globalSettings = path.join(RPE_DIR, 'settings.txt')
-      if (fs.existsSync(globalSettings)) fs.copyFileSync(globalSettings, taskSettings)
+      // 1. 解压 .pez 到任务目录 file/
+      const files = await this.extractPez(pezPath, taskFileDir)
+      logger.info(`[RPE] 解压完成: ${JSON.stringify(files)} 任务=${taskId}`)
 
-      // 1.5 自动写入发起人 QQ 头像 + 昵称（写任务目录 settings + 头像到任务目录 file/）
+      // 1.5 自动写入发起人 QQ 头像 + 昵称（settings.txt 在根目录，头像在任务目录 file/，head_sculpture 写相对路径）
       await this.updatePlayerProfile(e, taskDir)
 
-      // 2. 调用 render.bat（环境变量传参，cwd=任务目录——RPE Recorder 读 cwd 的 settings.txt）
+      // 2. 调用 render.bat（cwd=根目录，RPE 从根目录启动读根目录 settings.txt；文件路径用相对根目录的 jobs/<id>/file/）
       const meta = files.meta || {}
       const songName = meta.Name || 'Untitled'
+      const relFileDir = path.relative(RPE_DIR, taskFileDir).replace(/\\/g, '/')
+      const relTempDir = path.relative(RPE_DIR, taskTempDir).replace(/\\/g, '/')
+      const relOutDir = path.relative(RPE_DIR, taskOutputDir).replace(/\\/g, '/')
       const batEnv = {
         ...process.env,
         RPE_TITLE: songName,
@@ -463,6 +460,9 @@ print(json.dumps(info, ensure_ascii=False))
         RPE_COMPOSE: meta.Composer || '',
         RPE_CHARTER: meta.Charter || '',
         RPE_LENGTH: meta.Length || '',
+        RPE_REL_DIR: relFileDir,
+        RPE_TEMP_DIR: relTempDir,
+        RPE_OUT_DIR: relOutDir,
         // .set 预设的渲染参数（未提供则 render.bat 用默认值）
         RPE_FPS: parsedSet?.fps || '60',
         RPE_WIDTH: parsedSet?.width || '1620',
@@ -476,7 +476,7 @@ print(json.dumps(info, ensure_ascii=False))
         RPE_USE_TEMPLATE: useTemplate ? '1' : '',
       }
       logger.info(`[RPE] 调用 render.bat: ${songName} / ${files.chart}（任务 ${taskId}）`)
-      const { stdout, stderr } = await execAsync(`cmd /c "${RENDER_BAT}"`, { cwd: taskDir, env: batEnv, timeout: 30000 })
+      const { stdout, stderr } = await execAsync(`cmd /c "${RENDER_BAT}"`, { cwd: RPE_DIR, env: batEnv, timeout: 30000 })
       logger.info(`[RPE] render.bat 输出: ${(stdout || stderr).slice(0, 500)}`)
 
       // 2.5 shader 处理：谱面带 extra.json 时 RPE Recorder 会弹窗询问——向用户提问启用/跳过
@@ -484,7 +484,7 @@ print(json.dumps(info, ensure_ascii=False))
         this.askShader(e, taskId)
       }
 
-      // 3. 轮询任务 Output 目录（并行时无法用进程检测——只认任务目录出现新 mp4）
+      // 3. 轮询任务 Output 目录（出现新 mp4 即完成）
       const beforeSnapshot = this.outputSnapshot(taskOutputDir)
       const startTime = Date.now()
 
