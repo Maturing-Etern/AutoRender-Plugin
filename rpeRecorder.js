@@ -27,14 +27,20 @@ const POLL_INTERVAL = 2 * 60 * 1000
 /** 等待文件超时（秒） */
 const WAIT_FILE_TIMEOUT = 120
 
-/** 是否正在渲染 */
-let rendering = false
-/** 渲染队列：{ e, files }（多人请求排队，一个接一个渲染） */
+/** 是否正在渲染（当前活跃渲染数——并行最多 MAX_PARALLEL 个） */
+let activeRenders = 0
+/** 渲染任务工作目录（并行隔离：jobs/<taskId>/{file,temp,Output,settings.txt}） */
+const JOBS_DIR = path.join(RPE_DIR, 'jobs')
+/** 最大并行渲染数 */
+const MAX_PARALLEL = 2
+/** 渲染队列：{ e, files, useTemplate, taskId, taskDir }（多人请求排队，最多 N 个并行） */
 const renderQueue = []
 /** .set 预设解析出的渲染参数（渲染时传给 render.bat） */
 let parsedSet = null
 /** settings.txt 模板模式标记（用户直发 settings.txt 时 true，渲染只重写谱面字段） */
 let settingsTemplate = false
+/** shader 提问等待：{ key, taskId, expire }——谱面带 shader 时向用户提问启用/跳过 */
+let shaderAsk = null
 /** 等待文件会话：key = 群_用户 → { step: 'set'|'pez', expire } */
 const waitingSet = new Map() // key: `${groupId}_${userId}` → { step, expire }
 
@@ -55,8 +61,8 @@ export class rpeRecorder extends plugin {
   /** #rpe 指令：进入等待 .set 预设文件状态 */
   async startCmd() {
     const e = this.e
-    if (rendering) {
-      e.reply('当前有渲染任务进行中，请稍后再试')
+    if (activeRenders >= MAX_PARALLEL) {
+      e.reply(`当前有 ${activeRenders} 个渲染任务进行中（最多 ${MAX_PARALLEL} 个并行），请稍后再试`)
       return true
     }
     const key = this.sessionKey(e)
@@ -76,15 +82,30 @@ export class rpeRecorder extends plugin {
     const types = Array.isArray(e.message) ? e.message.map(m => m?.type) : []
     logger.debug(`[RPE] 收到消息: isGroup=${e.isGroup} types=${JSON.stringify(types)}`)
 
+    // shader 提问回复处理（启用/跳过——优先于文件判断）
+    if (shaderAsk && !Array.isArray(e.message)?.some(m => m?.type === 'file')) {
+      const skey = this.sessionKey(e)
+      if (skey === shaderAsk.key) {
+        const msg = (e.msg || '').trim()
+        const enable = /^(启用|要|是|开|yes|y)$/i.test(msg) || msg.includes('启用')
+        const skip = /^(跳过|不要|否|关|no|n)$/i.test(msg) || msg.includes('跳过')
+        if (enable || skip) {
+          await this.doShaderReply(skey, enable)
+          e.reply(enable ? '✅ 已启用 shader 特效' : '已跳过 shader 特效')
+          return true
+        }
+      }
+    }
+
     // 先提取文件段（非文件消息一律静默，不拦截任何人）
     const fileSegs = Array.isArray(e.message) ? e.message.filter(m => m?.type === 'file') : []
     if (fileSegs.length === 0) return false
 
-    // 渲染中：只对等待状态的文件消息提示（别人的消息静默）
-    if (rendering) {
+    // 渲染满：只对等待状态的文件消息提示（别人的消息静默）
+    if (activeRenders >= MAX_PARALLEL) {
       const key0 = this.sessionKey(e)
       if (waitingSet.has(key0)) {
-        e.reply('当前有渲染任务进行中，请稍后再试')
+        e.reply(`当前有 ${activeRenders} 个渲染任务进行中，请稍后再试`)
       }
       return false
     }
@@ -235,19 +256,20 @@ export class rpeRecorder extends plugin {
       logger.info(`[RPE] 已下载 .pez (${dl.buffer?.length || '?'} bytes)`)
       e.reply(`收到谱面包 ${fileName}（${((dl.buffer?.length || 0) / 1024 / 1024).toFixed(1)}MB），开始渲染`)
 
-      // 2. 解压 .pez 到任务专属目录（队列任务互不干扰——file/temp 不共用）
+      // 2. 解压 .pez 到任务专属目录（并行隔离：jobs/<taskId>/file/——file/temp 各任务独立）
       const taskId = String(Date.now())
-      const taskFileDir = path.join(FILE_DIR, taskId)
+      const taskDir = path.join(JOBS_DIR, taskId)
+      const taskFileDir = path.join(taskDir, 'file')
       fs.mkdirSync(taskFileDir, { recursive: true })
       const extracted = await this.extractPez(pezPath, taskFileDir)
-      logger.info(`[RPE] 解压完成: ${JSON.stringify(extracted)} 目录=${taskId}`)
+      logger.info(`[RPE] 解压完成: ${JSON.stringify(extracted)} 任务=${taskId}`)
 
-      // 3. 加入渲染队列（多人请求排队，一个接一个渲染）
-      renderQueue.push({ e, files: extracted, useTemplate: settingsTemplate, taskId })
-      if (renderQueue.length === 1 && !rendering) {
-        e.reply('开始渲染...')
+      // 3. 加入渲染队列（最多 MAX_PARALLEL 个并行，其余排队）
+      renderQueue.push({ e, files: extracted, useTemplate: settingsTemplate, taskId, taskDir })
+      if (activeRenders >= MAX_PARALLEL) {
+        e.reply(`已加入渲染队列（前面还有 ${renderQueue.length} 个任务），完成后自动发送视频`)
       } else {
-        e.reply(`已加入渲染队列（前面还有 ${renderQueue.length - 1} 个任务），完成后自动发送视频`)
+        e.reply('开始渲染...')
       }
       this.processQueue()
     } catch (err) {
@@ -257,16 +279,16 @@ export class rpeRecorder extends plugin {
     }
   }
 
-  /** 渲染队列消费：空闲时取出队头渲染，完成后自动继续下一个 */
+  /** 渲染队列消费：活跃数 < MAX_PARALLEL 时启动任务（并行），完成后自动继续 */
   async processQueue() {
-    if (rendering || renderQueue.length === 0) return
-    const task = renderQueue.shift()
-    rendering = true
-    try {
-      await this.render(task.e, task.files, task.useTemplate, task.taskId)
-    } finally {
-      rendering = false
-      this.processQueue()
+    while (activeRenders < MAX_PARALLEL && renderQueue.length > 0) {
+      const task = renderQueue.shift()
+      activeRenders++
+      this.render(task.e, task.files, task.useTemplate, task.taskId, task.taskDir)
+        .finally(() => {
+          activeRenders--
+          this.processQueue()
+        })
     }
   }
 
@@ -339,6 +361,7 @@ for n in names:
     elif low.endswith(('.mp3', '.wav', '.m4a', '.ogg', '.flac')): info['audio'] = n
     elif low.endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp')): info['picture'] = n
     elif low.endswith('info.txt'): info['info'] = n
+    if 'extra.json' in low or '/shader/' in low or low.endswith('.glsl'): info['extra'] = True
 print(json.dumps(info, ensure_ascii=False))
 `
     const pyFile = path.join(TEMP_DIR, 'rpe_extract.py')
@@ -359,13 +382,11 @@ print(json.dumps(info, ensure_ascii=False))
     return { ...info, meta }
   }
 
-  /** 自动写入发起人 QQ 头像 + 昵称到 settings.txt（head_sculpture / player_name） */
-  async updatePlayerProfile(e, taskId = '') {
+  /** 自动写入发起人 QQ 头像 + 昵称到任务目录 settings.txt（head_sculpture / player_name） */
+  async updatePlayerProfile(e, taskDir = '') {
     const userId = String(e.user_id)
-    const settingsPath = path.join(RPE_DIR, 'settings.txt')
+    const settingsPath = taskDir ? path.join(taskDir, 'settings.txt') : path.join(RPE_DIR, 'settings.txt')
     if (!fs.existsSync(settingsPath)) return
-    const taskDir = taskId ? path.join(FILE_DIR, taskId) : FILE_DIR
-    if (!fs.existsSync(taskDir)) fs.mkdirSync(taskDir, { recursive: true })
     try {
       // 0. 先拿 uin（数字 QQ）+ 昵称——qlogo 头像 url 需要数字 uin（e.user_id 可能是 uid u_ 开头）
       let uin = userId
@@ -378,32 +399,29 @@ print(json.dumps(info, ensure_ascii=False))
       } catch (err) {
         logger.warn(`[RPE] QQ 信息获取失败: ${err.message}`)
       }
-      // 1. 下载 QQ 头像并探测真实格式（q1.qlogo.cn 可能返回 jpg/webp）
+      // 1. 下载 QQ 头像——统一存任务目录 file/ 根 + 英文名 head.png（RPE Recorder 读中文名/子目录路径会失败）
+      const taskFileDir = taskDir ? path.join(taskDir, 'file') : FILE_DIR
+      if (!fs.existsSync(taskFileDir)) fs.mkdirSync(taskFileDir, { recursive: true })
       const avatarUrl = `https://q1.qlogo.cn/g?b=qq&nk=${uin}&s=640`
-      let headExt = 'png'
       try {
-        const tmpPath = path.join(taskDir, '头像.tmp')
+        const tmpPath = path.join(taskFileDir, 'head.tmp')
         await Bot.download(avatarUrl, tmpPath)
         const buf = fs.readFileSync(tmpPath).subarray(0, 4)
-        if (buf[0] === 0xFF && buf[1] === 0xD8) headExt = 'jpg'
-        else if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) headExt = 'png'
+        let headExt = 'jpg'
+        if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) headExt = 'png'
         else if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46) headExt = 'webp'
-        const finalHead = path.join(taskDir, `头像.${headExt}`)
+        const finalHead = path.join(taskFileDir, `head.${headExt}`)
         if (finalHead !== tmpPath) fs.renameSync(tmpPath, finalHead)
-        // RPE Recorder 只支持 png 头像——非 png 用自带 ffmpeg 转 png
-        if (headExt !== 'png') {
-          const headPng = path.join(taskDir, '头像.png')
-          await execAsync(`"${path.join(RPE_DIR, 'ffmpeg.exe')}" -y -i "${finalHead}" "${headPng}"`, { timeout: 30000 })
-          headExt = 'png'
-        }
-        logger.info(`[RPE] QQ 头像已就绪（png）: uin=${uin}`)
+        // 统一转 png（128x128 + rgba）
+        const headPng = path.join(taskFileDir, 'head.png')
+        await execAsync(`"${path.join(RPE_DIR, 'ffmpeg.exe')}" -y -i "${finalHead}" -vf "scale=128:128" -pix_fmt rgba "${headPng}"`, { timeout: 30000 })
+        logger.info(`[RPE] QQ 头像已就绪（head.png）: uin=${uin}`)
       } catch (err) {
         logger.warn(`[RPE] QQ 头像处理失败: ${err.message}`)
       }
-      // 3. 写 settings.txt（head_sculpture 指向任务目录内实际格式的头像）——UTF-8（RPE Recorder 读 UTF-8）
-      const headField = taskId ? `head_sculpture:file/${taskId}/头像.${headExt}` : `head_sculpture:file/头像.${headExt}`
+      // 2. 写 settings.txt（head_sculpture 指向 file/head.png——英文名根目录）
       let txt = fs.readFileSync(settingsPath, 'utf-8')
-      txt = txt.replace(/^head_sculpture:.*$/m, headField)
+      txt = txt.replace(/^head_sculpture:.*$/m, 'head_sculpture:file/head.png')
       txt = txt.replace(/^player_name:.*$/m, `player_name:${nickname}`)
       fs.writeFileSync(settingsPath, txt, 'utf-8')
       logger.info(`[RPE] settings.txt 已写入 QQ 头像/昵称（UTF-8）`)
@@ -413,18 +431,26 @@ print(json.dumps(info, ensure_ascii=False))
   }
 
   /** 渲染主流程：调 render.bat + 轮询 Output 目录 / 进程状态 */
-  async render(e, files, useTemplate = false, taskId = '') {
+  async render(e, files, useTemplate = false, taskId = '', taskDir = '') {
     try {
-      // 1. 记录渲染开始前的 Output 文件快照
-      const beforeSnapshot = this.outputSnapshot()
+      // 0. 任务工作目录（并行隔离：jobs/<taskId>/{file,temp,Output,settings.txt}）
+      if (!taskDir) {
+        taskDir = path.join(JOBS_DIR, taskId)
+        fs.mkdirSync(path.join(taskDir, 'file'), { recursive: true })
+      }
+      const taskSettings = path.join(taskDir, 'settings.txt')
+      const taskOutputDir = path.join(taskDir, 'Output')
+      fs.mkdirSync(path.join(taskDir, 'temp'), { recursive: true })
+      fs.mkdirSync(taskOutputDir, { recursive: true })
 
-      // 1.2 创建任务专属 temp 目录（temp/<taskId>/）
-      if (taskId) fs.mkdirSync(path.join(TEMP_DIR, taskId), { recursive: true })
+      // 1. 复制全局 settings.txt 到任务目录（渲染参数基础——并行时各自独立）
+      const globalSettings = path.join(RPE_DIR, 'settings.txt')
+      if (fs.existsSync(globalSettings)) fs.copyFileSync(globalSettings, taskSettings)
 
-      // 1.5 自动写入发起人 QQ 头像 + 昵称到任务专属目录（file/<taskId>/）
-      await this.updatePlayerProfile(e, taskId)
+      // 1.5 自动写入发起人 QQ 头像 + 昵称（写任务目录 settings + 头像到任务目录 file/）
+      await this.updatePlayerProfile(e, taskDir)
 
-      // 2. 调用 render.bat（环境变量传参，避免特殊字符转义问题）
+      // 2. 调用 render.bat（环境变量传参，cwd=任务目录——RPE Recorder 读 cwd 的 settings.txt）
       const meta = files.meta || {}
       const songName = meta.Name || 'Untitled'
       const batEnv = {
@@ -448,25 +474,25 @@ print(json.dumps(info, ensure_ascii=False))
         RPE_ADD_OFFSET: parsedSet?.addOffset || '70',
         // settings.txt 模板模式：render.bat 只重写谱面相关字段（file_dir/temp_dir/illustration/chart/audio/output_path）
         RPE_USE_TEMPLATE: useTemplate ? '1' : '',
-        // 任务专属目录（队列隔离：file/<taskId>/、temp/<taskId>/）
-        RPE_TASK_DIR: taskId || '',
       }
-      logger.info(`[RPE] 调用 render.bat: ${songName} / ${files.chart}`)
-      const { stdout, stderr } = await execAsync(`cmd /c "${RENDER_BAT}"`, { cwd: RPE_DIR, env: batEnv, timeout: 30000 })
+      logger.info(`[RPE] 调用 render.bat: ${songName} / ${files.chart}（任务 ${taskId}）`)
+      const { stdout, stderr } = await execAsync(`cmd /c "${RENDER_BAT}"`, { cwd: taskDir, env: batEnv, timeout: 30000 })
       logger.info(`[RPE] render.bat 输出: ${(stdout || stderr).slice(0, 500)}`)
 
-      // 2.5 自动确认 shader 弹窗（谱面带 extra.json 时 RPE Recorder 弹窗询问，默认开启——自动按回车）
-      this.autoConfirmShader()
+      // 2.5 shader 处理：谱面带 extra.json 时 RPE Recorder 会弹窗询问——向用户提问启用/跳过
+      if (files.extra) {
+        this.askShader(e, taskId)
+      }
 
-      // 3. 轮询完成信号（Output 出现新 mp4 或 RPE Recorder.exe 退出）
+      // 3. 轮询任务 Output 目录（并行时无法用进程检测——只认任务目录出现新 mp4）
+      const beforeSnapshot = this.outputSnapshot(taskOutputDir)
       const startTime = Date.now()
-      let recorderGone = false
 
       while (Date.now() - startTime < RENDER_TIMEOUT_MIN * 60 * 1000) {
         await this.sleep(POLL_INTERVAL)
 
-        // 完成信号 1：Output 出现新 mp4
-        const newMp4 = this.findNewOutput(beforeSnapshot, songName)
+        // 完成信号：任务 Output 出现新 mp4
+        const newMp4 = this.findNewOutput(beforeSnapshot, songName, taskOutputDir)
         if (newMp4) {
           logger.info(`[RPE] 检测到新输出: ${newMp4}`)
           // 等文件写完（大小稳定）
@@ -475,33 +501,19 @@ print(json.dumps(info, ensure_ascii=False))
           return
         }
 
-        // 完成信号 2：RPE Recorder.exe 进程已退出
-        if (!recorderGone && !(await this.isRecorderRunning())) {
-          recorderGone = true
-          logger.info('[RPE] RPE Recorder.exe 已退出，等待输出落盘...')
-          await this.sleep(POLL_INTERVAL)
-          const mp4 = this.findNewOutput(beforeSnapshot, songName)
-          if (mp4) {
-            await this.waitFileStable(mp4)
-            await this.sendVideo(e, mp4)
-            return
-          }
-          throw new Error('渲染进程退出但未找到输出视频，可能失败')
-        }
-
-        logger.info(`[RPE] 轮询中... 已耗时 ${Math.round((Date.now() - startTime) / 60000)} 分钟`)
+        logger.info(`[RPE] 任务 ${taskId} 轮询中... 已耗时 ${Math.round((Date.now() - startTime) / 60000)} 分钟`)
       }
 
       throw new Error(`渲染超时（${RENDER_TIMEOUT_MIN} 分钟）`)
     } catch (err) {
       logger.error(`[RPE] 渲染失败: ${err.stack || err.message}`)
-      // 采集 RPE Recorder 日志（谱面报错在 log.txt）
+      // 采集 RPE Recorder 日志（谱面报错在 log.txt，只取前两段）
       let rpeLog = ''
-      for (const lp of [path.join(RPE_DIR, 'temp', 'log.txt'), path.join(TEMP_DIR, taskId, 'log.txt')]) {
+      for (const lp of [path.join(RPE_DIR, 'temp', 'log.txt'), path.join(taskDir, 'temp', 'log.txt')]) {
         try {
           if (fs.existsSync(lp)) {
             const c = fs.readFileSync(lp, 'utf-8').trim()
-            if (c) rpeLog = c.split('\n').slice(-6).join('\n')
+            if (c) rpeLog = c.split('\n').map(l => l.trim()).filter(Boolean).slice(0, 2).join('\n')
           }
         } catch { /* ignore */ }
       }
@@ -523,27 +535,46 @@ print(json.dumps(info, ensure_ascii=False))
       await execAsync(`scp -P ${vmPort} -o StrictHostKeyChecking=no "${mp4Path}" ${vmUser}@${vmHost}:${remoteTmp}`, { timeout: 120000 })
       // 2. 复制进容器挂载目录（NapCat 可读）
       await execAsync(`ssh -p ${vmPort} -o StrictHostKeyChecking=no ${vmUser}@${vmHost} "sudo cp ${remoteTmp} ${remoteFinal} && sudo rm -f ${remoteTmp}"`, { timeout: 60000 })
-      // 3. NapCat HTTP API 发视频到原会话（群里 @ 发起人）
+      // 3. NapCat HTTP API 发视频（群里：先发 @ 文本提醒，再单独发视频——QQ 视频消息带 at 会被忽略）
+      let atUin = String(e.user_id)
+      try {
+        const ri = await this.napcatApi('http://127.0.0.1:3000', 'get_stranger_info', { user_id: String(e.user_id) })
+        atUin = String(ri?.data?.uin || e.user_id)
+      } catch { /* 保持原值 */ }
       const videoSeg = { type: 'video', data: { file: '/app/napcat/config/' + remoteName } }
-      const message = e.isGroup
-        ? {
+      if (e.isGroup) {
+        // ① 先发视频（单独消息）
+        const res1 = await fetch('http://127.0.0.1:3000/send_group_msg', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ group_id: String(e.group_id), message: [videoSeg] }),
+        })
+        const r1 = await res1.json()
+        logger.info(`[RPE] 视频发送结果: ${JSON.stringify(r1).slice(0, 150)}`)
+        // ② 再 @ 发起人提醒（纯文本消息——QQ 视频消息不支持 at）
+        await fetch('http://127.0.0.1:3000/send_group_msg', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
             group_id: String(e.group_id),
-            message: [
-              { type: 'at', data: { qq: String(e.user_id) } },
-              { type: 'text', data: { text: ' 渲染完成！视频已出 ✅' } },
-              videoSeg,
-            ],
-          }
-        : { user_id: String(e.user_id), message: [videoSeg] }
-      const res = await fetch('http://127.0.0.1:3000/' + (e.isGroup ? 'send_group_msg' : 'send_private_msg'), {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(message),
-      })
-      const r = await res.json()
-      logger.info(`[RPE] 视频发送结果: ${JSON.stringify(r).slice(0, 150)}`)
-      if (r?.status === 'ok') {
-        e.reply('渲染完成！视频已发送 ✅')
+            message: [{ type: 'at', data: { qq: atUin } }, { type: 'text', data: { text: ' 你的渲染视频已出 ✅' } }],
+          }),
+        })
+        if (r1?.status === 'ok') {
+          e.reply('渲染完成！视频已发送 ✅')
+        } else {
+          e.reply('渲染完成！但视频发送失败：' + (r1?.message || '未知错误'))
+        }
       } else {
-        e.reply('渲染完成！但视频发送失败：' + (r?.message || '未知错误'))
+        const res3 = await fetch('http://127.0.0.1:3000/send_private_msg', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: atUin, message: [videoSeg] }),
+        })
+        const r3 = await res3.json()
+        logger.info(`[RPE] 视频发送结果: ${JSON.stringify(r3).slice(0, 150)}`)
+        if (r3?.status === 'ok') {
+          e.reply('渲染完成！视频已发送 ✅')
+        } else {
+          e.reply('渲染完成！但视频发送失败：' + (r3?.message || '未知错误'))
+        }
       }
     } catch (err) {
       logger.error(`[RPE] 视频发送失败: ${err.message}`)
@@ -561,37 +592,57 @@ print(json.dumps(info, ensure_ascii=False))
     }
   }
 
-  /** 自动确认 RPE Recorder 的 shader 弹窗（每 5 秒对窗口按 Enter，最多 60 秒；弹窗默认按钮=开启） */
-  async autoConfirmShader() {
-    for (let i = 0; i < 12; i++) {
-      try {
-        await execAsync(`powershell -NoProfile -Command "$ws = New-Object -ComObject WScript.Shell; if ($ws.AppActivate('RPE Recorder')) { $ws.SendKeys('{ENTER}'); Write-Output 'sent' }"`, { timeout: 10000 })
-        logger.info(`[RPE] shader 弹窗自动确认（第${i + 1}次）`)
-      } catch { /* RPE Recorder 未启动时忽略 */ }
-      await this.sleep(5000)
+  /** shader 提问：向发起人询问是否启用（30 秒内回复，超时默认启用） */
+  async askShader(e, taskId) {
+    const key = this.sessionKey(e)
+    shaderAsk = { key, taskId, expire: Date.now() + 30000 }
+    e.reply('⚠️ 检测到该谱面带 shader 特效（extra.json），是否启用？\n回复「启用」或「跳过」（30 秒内，超时默认启用）')
+    // 超时默认启用（Enter 确认弹窗）
+    setTimeout(async () => {
+      if (shaderAsk && shaderAsk.key === key) {
+        shaderAsk = null
+        logger.info(`[RPE] shader 提问超时，默认启用`)
+        try {
+          await execAsync(`powershell -NoProfile -Command "$ws = New-Object -ComObject WScript.Shell; if ($ws.AppActivate('RPE Recorder')) { $ws.SendKeys('{ENTER}') }"`, { timeout: 10000 })
+        } catch { /* ignore */ }
+      }
+    }, 30000)
+  }
+
+  /** 根据用户回复执行 shader 选择（启用→Enter，跳过→Esc） */
+  async doShaderReply(key, enable) {
+    if (!shaderAsk || shaderAsk.key !== key) return false
+    shaderAsk = null
+    try {
+      const keyPress = enable ? '{ENTER}' : '{ESC}'
+      await execAsync(`powershell -NoProfile -Command "$ws = New-Object -ComObject WScript.Shell; if ($ws.AppActivate('RPE Recorder')) { $ws.SendKeys('${keyPress}') }"`, { timeout: 10000 })
+      logger.info(`[RPE] shader ${enable ? '启用' : '跳过'}（已按键）`)
+    } catch (err) {
+      logger.warn(`[RPE] shader 按键失败: ${err.message}`)
     }
+    return true
   }
 
   /** 渲染前的 Output 目录快照（文件名→修改时间，用于检测同名覆盖的新文件） */
-  outputSnapshot() {
-    if (!fs.existsSync(OUTPUT_DIR)) return {}
+  outputSnapshot(outputDir = OUTPUT_DIR) {
+    if (!fs.existsSync(outputDir)) return {}
     const snap = {}
-    for (const f of fs.readdirSync(OUTPUT_DIR).filter(f => f.endsWith('.mp4'))) {
-      snap[f] = fs.statSync(path.join(OUTPUT_DIR, f)).mtimeMs
+    for (const f of fs.readdirSync(outputDir).filter(f => f.endsWith('.mp4'))) {
+      snap[f] = fs.statSync(path.join(outputDir, f)).mtimeMs
     }
     return snap
   }
 
   /** 找渲染后新增/更新的 mp4（优先同名或最新修改） */
-  findNewOutput(beforeSnapshot, songName) {
-    if (!fs.existsSync(OUTPUT_DIR)) return null
-    const now = fs.readdirSync(OUTPUT_DIR).filter(f => f.endsWith('.mp4'))
+  findNewOutput(beforeSnapshot, songName, outputDir = OUTPUT_DIR) {
+    if (!fs.existsSync(outputDir)) return null
+    const now = fs.readdirSync(outputDir).filter(f => f.endsWith('.mp4'))
     // 新文件：不存在于快照，或修改时间比快照新（同名覆盖也算）
-    const newFiles = now.filter(f => !(f in beforeSnapshot) || fs.statSync(path.join(OUTPUT_DIR, f)).mtimeMs > beforeSnapshot[f])
+    const newFiles = now.filter(f => !(f in beforeSnapshot) || fs.statSync(path.join(outputDir, f)).mtimeMs > beforeSnapshot[f])
     if (newFiles.length === 0) return null
     // 优先同名，否则取最新修改的
     const match = newFiles.find(f => f.startsWith(songName)) ||
-      newFiles.sort((a, b) => fs.statSync(path.join(OUTPUT_DIR, b)).mtimeMs - fs.statSync(path.join(OUTPUT_DIR, a)).mtimeMs)[0]
+      newFiles.sort((a, b) => fs.statSync(path.join(outputDir, b)).mtimeMs - fs.statSync(path.join(outputDir, a)).mtimeMs)[0]
     return path.join(OUTPUT_DIR, match)
   }
 
