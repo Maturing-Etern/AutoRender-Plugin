@@ -351,11 +351,16 @@ z.extractall(r'${destDir}')
 info = {}
 for n in names:
     low = n.lower()
-    if low.endswith(('.json', '.pec')): info['chart'] = n
-    elif low.endswith(('.mp3', '.wav', '.m4a', '.ogg', '.flac')): info['audio'] = n
-    elif low.endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp')): info['picture'] = n
-    elif low.endswith('info.txt'): info['info'] = n
-    if 'extra.json' in low or '/shader/' in low or low.endswith('.glsl'): info['extra'] = True
+    if 'extra.json' in low or '/shader/' in low or low.endswith('.glsl'):
+        info['extra'] = True
+    elif low.endswith(('.json', '.pec')):
+        info['chart'] = n
+    elif low.endswith(('.mp3', '.wav', '.m4a', '.ogg', '.flac')):
+        info['audio'] = n
+    elif low.endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp')):
+        info['picture'] = n
+    elif low.endswith('info.txt'):
+        info['info'] = n
 print(json.dumps(info, ensure_ascii=False))
 `
     const pyFile = path.join(TEMP_DIR, 'rpe_extract.py')
