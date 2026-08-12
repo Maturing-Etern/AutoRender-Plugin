@@ -92,6 +92,18 @@
             <label class="q-label" for="f-player">玩家名</label>
             <input class="form-input" id="f-player" type="text" placeholder="视频里显示的名字（不填默认 QQ 昵称）" />
           </div>
+          <div class="question-item">
+            <label class="q-label" for="f-rks">RKS</label>
+            <input class="form-input" id="f-rks" type="text" inputmode="decimal" placeholder="如 16.52（选填）" />
+          </div>
+          <div class="question-item">
+            <label class="q-label" for="f-challenge">课题模式 <span class="q-hint-inline">challenge</span></label>
+            <input class="form-input" id="f-challenge" type="text" inputmode="numeric" placeholder="如 42（选填）" />
+          </div>
+          <div class="question-item">
+            <label class="q-label" for="f-challenge-color">课题颜色</label>
+            <input class="form-input" id="f-challenge-color" type="text" placeholder="如 彩（课题模式填了才生效）" />
+          </div>
         </div>
       </div>
 
@@ -274,6 +286,9 @@ function genSettings() {
   const audioName = val("f-audio") || "audio.mp3";
   const illustName = val("f-illust") || "illustration.png";
   const playerName = val("f-player");
+  const rks = val("f-rks");
+  const challenge = val("f-challenge");
+  const challengeColor = val("f-challenge-color");
 
   const lines = [
     "fps:" + fps,
@@ -299,6 +314,10 @@ function genSettings() {
     "temp_dir:temp",
     // 玩家名：填了才输出（不填 bot 端默认用 QQ 昵称）
     ...(playerName ? ["player_name:" + playerName] : []),
+    // RKS：选填
+    ...(rks ? ["rks:" + rks] : []),
+    // 课题模式：challenge 填了才输出（颜色默认 彩）
+    ...(challenge ? ["challenge:" + challenge, "challenge_color:" + (challengeColor || "彩")] : []),
   ];
 
   const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
