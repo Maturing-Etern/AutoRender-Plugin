@@ -82,16 +82,19 @@ export class rpeRecorder extends plugin {
     const types = Array.isArray(e.message) ? e.message.map(m => m?.type) : []
     logger.debug(`[RPE] 收到消息: isGroup=${e.isGroup} types=${JSON.stringify(types)}`)
 
-    // shader 提问回复处理（启用/跳过——优先于文件判断）
+    // shader 提问回复处理（启用/跳过——优先于文件判断；超时后回复仍响应）
     if (shaderAsk && !Array.isArray(e.message)?.some(m => m?.type === 'file')) {
       const skey = this.sessionKey(e)
       if (skey === shaderAsk.key) {
         const msg = (e.msg || '').trim()
-        const enable = /^(启用|要|是|开|yes|y)$/i.test(msg) || msg.includes('启用')
-        const skip = /^(跳过|不要|否|关|no|n)$/i.test(msg) || msg.includes('跳过')
+        // 先判跳过（含"不启用"），再判启用——避免 "不启用" 被 includes('启用') 误判
+        const skip = /^(跳过|不要|否|关|no|n|不启用|不)$/i.test(msg) || msg.includes('跳过') || msg.includes('不启用')
+        const enable = !skip && (/^(启用|要|是|开|yes|y)$/i.test(msg) || msg.includes('启用'))
         if (enable || skip) {
-          await this.doShaderReply(skey, enable)
-          e.reply(enable ? '✅ 已启用 shader 特效' : '已跳过 shader 特效')
+          shaderAsk = null
+          await this.clickShaderDialog(enable)
+          logger.info(`[RPE] shader 回复处理: ${enable ? '启用(y)' : '不启用(n)'}（发起人 ${skey}）`)
+          e.reply(enable ? '✅ 已执行：启用 shader（已按 y）' : '✅ 已执行：不启用 shader（已按 n）')
           return true
         }
       }
@@ -514,14 +517,14 @@ print(json.dumps(info, ensure_ascii=False))
         // settings.txt 模板模式：render.bat 只重写谱面相关字段（file_dir/temp_dir/illustration/chart/audio/output_path）
         RPE_USE_TEMPLATE: useTemplate ? '1' : '',
       }
-      logger.info(`[RPE] 调用 render.bat: ${songName} / ${files.chart}（任务 ${taskId}）`)
-      const { stdout, stderr } = await execAsync(`cmd /c "${RENDER_BAT}"`, { cwd: RPE_DIR, env: batEnv, timeout: 30000 })
-      logger.info(`[RPE] render.bat 输出: ${(stdout || stderr).slice(0, 500)}`)
-
-      // 2.5 shader 处理：谱面带 extra.json 时 RPE Recorder 会弹窗询问——向用户提问启用/跳过
+      // 2.4 shader 处理：谱面带 extra.json 时 RPE Recorder 会弹窗询问——先问发起人（提前到 render.bat 前，避免等 render.bat 卡完才问）
       if (files.extra) {
         this.askShader(e, taskId)
       }
+
+      logger.info(`[RPE] 调用 render.bat: ${songName} / ${files.chart}（任务 ${taskId}）`)
+      const { stdout, stderr } = await execAsync(`cmd /c "${RENDER_BAT}"`, { cwd: RPE_DIR, env: batEnv, timeout: 30000 })
+      logger.info(`[RPE] render.bat 输出: ${(stdout || stderr).slice(0, 500)}`)
 
       // 3. 轮询任务 Output 目录（出现新 mp4 即完成）
       const beforeSnapshot = this.outputSnapshot(taskOutputDir)
@@ -643,21 +646,22 @@ print(json.dumps(info, ensure_ascii=False))
     }
   }
 
-  /** shader 提问：向发起人询问是否启用（30 秒内回复，超时默认启用） */
+  /** shader 提问：向发起人询问是否启用（3 分钟内回复；超时自动跳过 n 并通知——不擅自启用） */
   async askShader(e, taskId) {
     const key = this.sessionKey(e)
-    shaderAsk = { key, taskId, expire: Date.now() + 30000 }
-    e.reply('⚠️ 检测到该谱面带 shader 特效（extra.json），是否启用？\n回复「启用」或「跳过」（30 秒内，超时默认启用）')
-    // 超时默认启用（Enter 确认弹窗）
+    shaderAsk = { key, taskId, expire: Date.now() + 180000 }
+    e.reply('⚠️ 检测到该谱面带 shader 特效（extra.json），是否启用？\n回复「启用」或「不启用」（3 分钟内，超时默认不启用）')
+    // 超时默认不启用（n）——不擅自启用 shader
     setTimeout(async () => {
       if (shaderAsk && shaderAsk.key === key) {
         shaderAsk = null
-        logger.info(`[RPE] shader 提问超时，默认启用`)
+        logger.info(`[RPE] shader 提问超时，默认不启用`)
         try {
-          await this.clickShaderDialog(true)
+          await this.clickShaderDialog(false)
         } catch { /* ignore */ }
+        try { e.reply('⏰ 3 分钟未回复，已默认不启用 shader') } catch { /* ignore */ }
       }
-    }, 30000)
+    }, 180000)
   }
 
   /** shader 弹窗按键（启用→输入 y，跳过→输入 n——RPE 弹窗即时响应，无需 Enter）：AppActivate 多级标题匹配，激活后 SendKeys */
