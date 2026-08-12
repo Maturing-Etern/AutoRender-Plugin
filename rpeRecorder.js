@@ -647,10 +647,23 @@ print(json.dumps(info, ensure_ascii=False))
         shaderAsk = null
         logger.info(`[RPE] shader 提问超时，默认启用`)
         try {
-          await execAsync(`powershell -NoProfile -Command "$ws = New-Object -ComObject WScript.Shell; if ($ws.AppActivate('RPE Recorder')) { $ws.SendKeys('{ENTER}') }"`, { timeout: 10000 })
+          await this.clickShaderDialog(true)
         } catch { /* ignore */ }
       }
     }, 30000)
+  }
+
+  /** shader 弹窗按键（启用→Enter 默认按钮，跳过→Esc）：AppActivate 多级标题匹配，激活后 SendKeys */
+  async clickShaderDialog(enable) {
+    const keyPress = enable ? '{ENTER}' : '{ESC}'
+    const script = `$ws = New-Object -ComObject WScript.Shell; ` +
+      `$ok = $ws.AppActivate('RPE Recorder'); ` +
+      `if (-not $ok) { $ok = $ws.AppActivate('RPE') }; ` +
+      `if (-not $ok) { $ok = $ws.AppActivate('shader') }; ` +
+      `if (-not $ok) { $ok = $ws.AppActivate('extra') }; ` +
+      `if ($ok) { Start-Sleep -Milliseconds 300; $ws.SendKeys('${keyPress}'); Write-Output 'clicked' } else { Write-Output 'window-not-found' }`
+    const { stdout } = await execAsync(`powershell -NoProfile -Command "${script}"`, { timeout: 10000 })
+    logger.info(`[RPE] shader 弹窗按键结果: ${(stdout || '').trim()} (${enable ? '启用' : '跳过'})`)
   }
 
   /** 根据用户回复执行 shader 选择（启用→Enter，跳过→Esc） */
@@ -658,9 +671,7 @@ print(json.dumps(info, ensure_ascii=False))
     if (!shaderAsk || shaderAsk.key !== key) return false
     shaderAsk = null
     try {
-      const keyPress = enable ? '{ENTER}' : '{ESC}'
-      await execAsync(`powershell -NoProfile -Command "$ws = New-Object -ComObject WScript.Shell; if ($ws.AppActivate('RPE Recorder')) { $ws.SendKeys('${keyPress}') }"`, { timeout: 10000 })
-      logger.info(`[RPE] shader ${enable ? '启用' : '跳过'}（已按键）`)
+      await this.clickShaderDialog(enable)
     } catch (err) {
       logger.warn(`[RPE] shader 按键失败: ${err.message}`)
     }
