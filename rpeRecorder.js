@@ -344,6 +344,7 @@ export class rpeRecorder extends plugin {
     // 用 python 解压（Windows 自带 zipfile）——写到临时 .py 再执行（cmd 里多行 -c 不可靠）
     const script = `
 import zipfile, sys, json
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 z = zipfile.ZipFile(r'${pezPath}')
 names = z.namelist()
 z.extractall(r'${destDir}')
@@ -440,9 +441,10 @@ print(json.dumps(info, ensure_ascii=False))
 
   /** 渲染主流程：settings.txt 在根目录，谱面文件在任务目录 jobs/<taskId>/{file,temp,Output}（相对路径指向），RPE 从根目录启动 */
   async render(e, pezPath, useTemplate = false, taskId = '') {
+    // taskDir 提到 try 外——catch 里也要用（日志采集），const 块作用域会导致 catch ReferenceError
+    const taskDir = path.join(JOBS_DIR, taskId)
     try {
       // 0. 任务工作目录（jobs/<taskId>/{file,temp,Output}——谱面文件独立目录，settings.txt 固定根目录）
-      const taskDir = path.join(JOBS_DIR, taskId)
       const taskFileDir = path.join(taskDir, 'file')
       const taskTempDir = path.join(taskDir, 'temp')
       const taskOutputDir = path.join(taskDir, 'Output')
