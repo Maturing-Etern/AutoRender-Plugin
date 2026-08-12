@@ -82,8 +82,9 @@ export class rpeRecorder extends plugin {
     const types = Array.isArray(e.message) ? e.message.map(m => m?.type) : []
     logger.debug(`[RPE] 收到消息: isGroup=${e.isGroup} types=${JSON.stringify(types)}`)
 
-    // shader 提问回复处理（启用/跳过——优先于文件判断；超时后回复仍响应）
-    if (shaderAsk && !Array.isArray(e.message)?.some(m => m?.type === 'file')) {
+    // shader 提问回复处理（启用/不启用——优先于文件判断；超时后回复仍响应）
+    const msgHasFile = Array.isArray(e.message) && e.message.some(m => m?.type === 'file')
+    if (shaderAsk && !msgHasFile) {
       const skey = this.sessionKey(e)
       if (skey === shaderAsk.key) {
         const msg = (e.msg || '').trim()
