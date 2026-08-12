@@ -653,9 +653,9 @@ print(json.dumps(info, ensure_ascii=False))
     }, 30000)
   }
 
-  /** shader 弹窗按键（启用→输入 y+Enter，跳过→输入 n+Enter——RPE 弹窗是 y/n 输入框）：AppActivate 多级标题匹配，激活后 SendKeys */
+  /** shader 弹窗按键（启用→输入 y，跳过→输入 n——RPE 弹窗即时响应，无需 Enter）：AppActivate 多级标题匹配，激活后 SendKeys */
   async clickShaderDialog(enable) {
-    const keyPress = enable ? 'y{ENTER}' : 'n{ENTER}'
+    const keyPress = enable ? 'y' : 'n'
     const script = `$ws = New-Object -ComObject WScript.Shell; ` +
       `$ok = $ws.AppActivate('RPE Recorder'); ` +
       `if (-not $ok) { $ok = $ws.AppActivate('RPE') }; ` +
@@ -663,7 +663,7 @@ print(json.dumps(info, ensure_ascii=False))
       `if (-not $ok) { $ok = $ws.AppActivate('extra') }; ` +
       `if ($ok) { Start-Sleep -Milliseconds 500; $ws.SendKeys('${keyPress}'); Write-Output 'clicked' } else { Write-Output 'window-not-found' }`
     const { stdout } = await execAsync(`powershell -NoProfile -Command "${script}"`, { timeout: 10000 })
-    logger.info(`[RPE] shader 弹窗按键结果: ${(stdout || '').trim()} (${enable ? 'y+Enter 启用' : 'n+Enter 跳过'})`)
+    logger.info(`[RPE] shader 弹窗按键结果: ${(stdout || '').trim()} (${enable ? 'y 启用' : 'n 跳过'})`)
   }
 
   /** 根据用户回复执行 shader 选择（启用→Enter，跳过→Esc） */
