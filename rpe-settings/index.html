@@ -320,7 +320,8 @@ function genSettings() {
     ...(challenge ? ["challenge:" + challenge, "challenge_color:" + (challengeColor || "彩")] : []),
   ];
 
-  const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+  // UTF-8 BOM 前缀：Windows 记事本/QQ/老编辑器按 ANSI 打开 UTF-8 无 BOM 会乱码，BOM 让它们自动识别为 UTF-8
+  const blob = new Blob(["\uFEFF" + lines.join("\n")], { type: "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
