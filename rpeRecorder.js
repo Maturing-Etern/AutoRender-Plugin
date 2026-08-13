@@ -435,6 +435,7 @@ print(json.dumps(info, ensure_ascii=False))
       // 2. 写根目录 settings.txt（head_sculpture 指向头像文件的相对根目录路径——任务目录 file/head.png；头像失败时回退 file/head.png）
       // player_name：用户 settings 里已填（非空）则保留，没填则默认用 QQ 昵称
       let txt = fs.readFileSync(settingsPath, 'utf-8')
+      if (txt.charCodeAt(0) === 0xFEFF) txt = txt.slice(1) // 剥掉 UTF-8 BOM（网页下载带 BOM，防首行 key 错乱）
       const headRel = taskDir ? (headPng ? path.relative(RPE_DIR, headPng).replace(/\\/g, '/') : 'file/head.png') : 'file/head.png'
       txt = txt.replace(/^head_sculpture:.*$/m, 'head_sculpture:' + headRel)
       if (!/^player_name:\s*\S/m.test(txt)) {
@@ -487,7 +488,8 @@ print(json.dumps(info, ensure_ascii=False))
       let endSec = parsedSet?.end || meta.Length || '180'
       if (useTemplate) {
         try {
-          const st = fs.readFileSync(path.join(RPE_DIR, 'settings.txt'), 'utf-8')
+          const st0 = fs.readFileSync(path.join(RPE_DIR, 'settings.txt'), 'utf-8')
+          const st = st0.charCodeAt(0) === 0xFEFF ? st0.slice(1) : st0
           const m = st.match(/^end_second:\s*([\d.]+)/m)
           const v = m ? Number(m[1]) : 0
           if (v > 0) endSec = String(v)
