@@ -1,10 +1,10 @@
 渲染设置文件，由录制台生成。要供 RPE Recorder 使用，请确保文件名为 settings
-quiet:0
+quiet:1
 file_dir:file
 temp_dir:temp
-illustration_name:file\15368645.png
-chart_name:file\15368645.json
-audio_name:file\15368645.mp3
+illustration_name:file/cover.png
+chart_name:file/chart.json
+audio_name:file/audio.mp3
 fx_volume:0.7000
 music_volume:1.0000
 end_volume:0.8000
@@ -15,26 +15,26 @@ add_offset:70
 video_encoder:libx264
 quality:30
 audio_bitrate:320
-output_path:E:\HugoMoveData\User\lenovo\Downloads\RPE Recorder\Output\Successful Person (5).mp4
+output_path:Output/render.mp4
 note_size:175.0000
-back_dim:198
+back_dim:100
 fps:60
 width:1620
 height:1080
-begin_second:0.0000
-end_second:181.6300
+begin_second:0
+end_second:0
 begin_cut:0
 end_cut:0
 full_score:1000000
-title:Successful Person
-difficulty_text:IN  Lv.16
-level:16
+title:Untitled
+difficulty_text:IN Lv.1
+level:17
 level_super:
 level_sub:
-grade:IN
-compose:Dio Deer
-chart:Korus_ & Saien_
-illustration:Dio Deer
+grade:AT
+compose:
+chart:
+illustration:UK
 tip:Tip: 
 loading:Loading...
 watermark:
@@ -55,14 +55,14 @@ chinese_info:0
 mirror:0
 title_bar:0
 pause_version:0
-opening_duration:5.8000
-opening:0
+opening_duration:5.8
+opening:1
 playing:1
-ending_duration:6.0000
-ending:0
+ending_duration:6.0
+ending:1
 hardware_speedup:1
 speed_error:0.0001
-hold_bpm:200.0000
+hold_bpm:530.0000
 scale_rely:1
 length_rely:1
 linesize_rely:1
@@ -74,8 +74,8 @@ low_sq:0.2
 high_sq:0.25
 sq_size:0.175
 sq_time:500
-head_sculpture:file/AprilFoolGino.png
-player_name:Maturing+
+head_sculpture:file/head.png
+player_name:
 rks:16.52
 challenge:42
 challenge_color:彩
