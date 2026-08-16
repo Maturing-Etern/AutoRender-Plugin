@@ -442,8 +442,11 @@ print(json.dumps(info, ensure_ascii=False))
         if (/^player_name:/m.test(txt)) txt = txt.replace(/^player_name:.*$/m, `player_name:${nickname}`)
         else txt += '\nplayer_name:' + nickname
       }
+      // 开场画面（opening:1 = 视频开头显示曲绘+歌名页）——缺省时 RPE 不开场，曲绘永远不显示
+      if (!/^opening:/m.test(txt)) txt += '\nopening:1'
+      if (!/^opening_duration:/m.test(txt)) txt += '\nopening_duration:5.8'
       fs.writeFileSync(settingsPath, txt, 'utf-8')
-      logger.info(`[RPE] settings.txt 已写入 QQ 头像 + 默认昵称（UTF-8）`)
+      logger.info(`[RPE] settings.txt 已写入 QQ 头像 + 默认昵称 + 开场曲绘（UTF-8）`)
     } catch (err) {
       logger.warn(`[RPE] 更新玩家信息失败: ${err.message}`)
     }
