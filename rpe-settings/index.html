@@ -312,6 +312,9 @@ function genSettings() {
     "illustration_name:" + filePrefixed(illustName),
     "file_dir:file",
     "temp_dir:temp",
+    // 开场画面：视频开头显示曲绘+歌名页（不开场则曲绘不显示）
+    "opening:1",
+    "opening_duration:5.8",
     // 玩家名：填了才输出（不填 bot 端默认用 QQ 昵称）
     ...(playerName ? ["player_name:" + playerName] : []),
     // RKS：选填
