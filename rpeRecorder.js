@@ -187,10 +187,14 @@ export class rpeRecorder extends plugin {
           const savePath = path.join(RPE_DIR, 'save1.set')
           await Bot.download(setUrl, savePath)
           logger.info(`[RPE] 预设文件已保存: ${savePath}`)
-          // 解析 .set 的渲染参数（fps/分辨率/码率/offset 等），供渲染时传给 render.bat
+          // 解析 .set 的渲染参数——注意：.set（录制台导出）字段名与 settings.txt 大部分不同！
+          //   .set: fps.text → settings fps；videoQuality.text → quality；beginSecond_2 → begin_second
+          //   .set: dim.value → back_dim；blur.value → back_blur；opening.state → opening:1/0；ending.state → ending
           try {
             const setJson = JSON.parse(fs.readFileSync(savePath, 'utf-8'))
-            const t = v => v?.text ?? v
+            // t: .set 值结构不统一——{"text":"60"} / {"value":198} / 裸值 "60" 都要能取到
+            const t = v => (v?.text ?? v?.value ?? v)
+            const s = v => (v && v.state !== undefined) ? (v.state ? '1' : '0') : v
             parsedSet = {
               fps: t(setJson.fps),
               width: t(setJson.width),
@@ -200,6 +204,23 @@ export class rpeRecorder extends plugin {
               begin: t(setJson.beginSecond_2),
               end: t(setJson.endSecond_2),
               addOffset: t(setJson.addOffset),
+              // 动画/背景（字段名与 settings 不同）
+              opening: s(setJson.opening),
+              openingDuration: t(setJson.openingDuration),
+              ending: s(setJson.ending),
+              endingDuration: t(setJson.endingDuration),
+              backDim: t(setJson.dim),
+              backBlur: t(setJson.blur),
+              // 玩家/歌曲信息
+              rks: t(setJson.rks),
+              challenge: t(setJson.challenge),
+              playerName: t(setJson.player_name),
+              title: t(setJson.title),
+              difficulty: t(setJson.difficultyText),
+              grade: t(setJson.grade),
+              level: t(setJson.level),
+              compose: t(setJson.compose),
+              chart: t(setJson.chart),
             }
             logger.info(`[RPE] 预设渲染参数: ${JSON.stringify(parsedSet)}`)
           } catch (e2) {
@@ -509,23 +530,25 @@ print(json.dumps(info, ensure_ascii=False))
       rep('begin_second', getU('begin_second') || parsedSet?.begin || '0')
       rep('add_offset', getU('add_offset') || parsedSet?.addOffset || '70')
       rep('title', songName)
-      rep('difficulty_text', meta.Level || 'IN Lv.1')
-      rep('compose', meta.Composer || '')
-      rep('chart', meta.Charter || '')
+      rep('difficulty_text', meta.Level || parsedSet?.difficulty || 'IN Lv.1')
+      rep('compose', meta.Composer || parsedSet?.compose || '')
+      rep('chart', meta.Charter || parsedSet?.chart || '')
       rep('fps', getU('fps') || parsedSet?.fps || '60')
       rep('width', getU('width') || parsedSet?.width || '1620')
       rep('height', getU('height') || parsedSet?.height || '1080')
       rep('quality', getU('quality') || parsedSet?.videoQuality || '30')
       rep('audio_bitrate', getU('audio_bitrate') || parsedSet?.audioBitrate || '320')
-      rep('opening', getU('opening') ?? '1')
-      rep('opening_duration', getU('opening_duration') ?? '5.8')
-      rep('ending', getU('ending') ?? '1')
-      rep('ending_duration', getU('ending_duration') ?? '6.0')
-      rep('back_dim', getU('back_dim') ?? '100')
-      rep('player_name', getU('player_name') || '')
-      rep('rks', getU('rks'))
-      rep('challenge', getU('challenge'))
-      rep('challenge_color', getU('challenge_color'))
+      rep('opening', getU('opening') ?? parsedSet?.opening ?? '1')
+      rep('opening_duration', getU('opening_duration') ?? parsedSet?.openingDuration ?? '5.8')
+      rep('ending', getU('ending') ?? parsedSet?.ending ?? '1')
+      rep('ending_duration', getU('ending_duration') ?? parsedSet?.endingDuration ?? '6.0')
+      rep('back_dim', getU('back_dim') ?? parsedSet?.backDim ?? '100')
+      rep('back_blur', getU('back_blur') ?? parsedSet?.backBlur ?? '80')
+      rep('rks', getU('rks') ?? parsedSet?.rks)
+      rep('challenge', getU('challenge') ?? parsedSet?.challenge)
+      rep('grade', getU('grade') ?? parsedSet?.grade)
+      rep('level', getU('level') ?? parsedSet?.level)
+      rep('player_name', getU('player_name') ?? parsedSet?.playerName ?? '')
       fs.writeFileSync(rootSettings, st, 'utf-8')
       logger.info(`[RPE] settings.txt 已按官方模板写入（任务 ${taskId}）`)
 
