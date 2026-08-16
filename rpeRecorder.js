@@ -19,6 +19,9 @@ const FILE_DIR = path.join(RPE_DIR, 'file')      // 输入文件目录
 const OUTPUT_DIR = path.join(RPE_DIR, 'Output')  // 输出视频目录
 const TEMP_DIR = path.join(RPE_DIR, 'temp')      // 临时目录
 const RENDER_BAT = path.join(RPE_DIR, 'render.bat')
+const RPE_EXE = path.join(RPE_DIR, 'RPE Recorder.exe')
+/** 官方完整 settings 模板（RPE -i 自动渲染必需完整字段）——渲染时读模板替换字段写根 settings.txt */
+const SETTINGS_TEMPLATE = path.join(__dirname, 'settings-template.txt')
 
 /** 渲染超时（分钟） */
 const RENDER_TIMEOUT_MIN = 30
@@ -445,6 +448,8 @@ print(json.dumps(info, ensure_ascii=False))
       // 开场画面（opening:1 = 视频开头显示曲绘+歌名页）——缺省时 RPE 不开场，曲绘永远不显示
       if (!/^opening:/m.test(txt)) txt += '\nopening:1'
       if (!/^opening_duration:/m.test(txt)) txt += '\nopening_duration:5.8'
+      // 自动渲染开关（playing:1 = 自动录制；缺了 RPE 只开编辑器等手动点播放，永远不渲染）
+      if (!/^playing:/m.test(txt)) txt += '\nplaying:1'
       // 背景变暗兜底：back_dim >= 250（全黑）时自动调亮到 100——否则背景曲绘完全看不见
       if (/^back_dim:\s*(2[5-9][0-9])\s*$/m.test(txt) || /^back_dim:\s*255\s*$/m.test(txt)) {
         txt = txt.replace(/^back_dim:.*$/m, 'back_dim:100')
@@ -474,68 +479,70 @@ print(json.dumps(info, ensure_ascii=False))
       const files = await this.extractPez(pezPath, taskFileDir)
       logger.info(`[RPE] 解压完成: ${JSON.stringify(files)} 任务=${taskId}`)
 
-      // 1.5 自动写入发起人 QQ 头像 + 昵称（settings.txt 在根目录，头像在任务目录 file/，head_sculpture 写相对路径）
-      await this.updatePlayerProfile(e, taskDir)
-      // 1.6 确保根目录 settings.txt 有 output_path 行（render.bat 只替换不追加——没有该行 RPE 输出到默认目录）
-      {
-        const rootSettings = path.join(RPE_DIR, 'settings.txt')
-        if (fs.existsSync(rootSettings)) {
-          let st = fs.readFileSync(rootSettings, 'utf-8')
-          if (!/^output_path:/m.test(st)) st += '\noutput_path:'
-          fs.writeFileSync(rootSettings, st, 'utf-8')
-        }
+      // 1.5 读用户直发的根 settings.txt（网页下载版，仅 settingsTemplate 模式）——提取用户参数用于覆盖模板
+      const rootSettings = path.join(RPE_DIR, 'settings.txt')
+      let userSettings = ''
+      if (settingsTemplate && fs.existsSync(rootSettings)) {
+        userSettings = fs.readFileSync(rootSettings, 'utf-8')
+        if (userSettings.charCodeAt(0) === 0xFEFF) userSettings = userSettings.slice(1)
       }
+      const getU = (k) => { const m = userSettings.match(new RegExp(`^${k}:\\s*(.+)$`, 'm')); return m ? m[1].trim() : null }
 
-      // 2. 调用 render.bat（cwd=根目录，RPE 从根目录启动读根目录 settings.txt；文件路径用相对根目录的 jobs/<id>/file/）
+      // 2. 官方完整 settings 模板 → 替换谱面字段 + 用户参数 → 写根 settings.txt
+      //    RPE Recorder v3.1 支持 "-i settings.txt" 自动渲染，但 settings 必须是官方完整格式（简版缺字段不渲染）
       const meta = files.meta || {}
       const songName = meta.Name || 'Untitled'
       const relFileDir = path.relative(RPE_DIR, taskFileDir).replace(/\\/g, '/')
       const relTempDir = path.relative(RPE_DIR, taskTempDir).replace(/\\/g, '/')
       const relOutDir = path.relative(RPE_DIR, taskOutputDir).replace(/\\/g, '/')
-      // end_second：模板模式读用户 settings 的值；0/空时用歌曲长度（避免 end_second:0 导致音频合成失败）
-      let endSec = parsedSet?.end || meta.Length || '180'
-      if (useTemplate) {
-        try {
-          const st0 = fs.readFileSync(path.join(RPE_DIR, 'settings.txt'), 'utf-8')
-          const st = st0.charCodeAt(0) === 0xFEFF ? st0.slice(1) : st0
-          const m = st.match(/^end_second:\s*([\d.]+)/m)
-          const v = m ? Number(m[1]) : 0
-          if (v > 0) endSec = String(v)
-        } catch { /* 读不到就用歌曲长度 */ }
-      }
-      const batEnv = {
-        ...process.env,
-        RPE_TITLE: songName,
-        RPE_CHART: files.chart,
-        RPE_AUDIO: files.audio || '',
-        RPE_PIC: files.picture || '',
-        RPE_LEVEL: meta.Level || 'IN Lv.1',
-        RPE_COMPOSE: meta.Composer || '',
-        RPE_CHARTER: meta.Charter || '',
-        RPE_LENGTH: meta.Length || '',
-        RPE_REL_DIR: relFileDir,
-        RPE_TEMP_DIR: relTempDir,
-        RPE_OUT_DIR: relOutDir,
-        // .set 预设的渲染参数（未提供则 render.bat 用默认值）
-        RPE_FPS: parsedSet?.fps || '60',
-        RPE_WIDTH: parsedSet?.width || '1620',
-        RPE_HEIGHT: parsedSet?.height || '1080',
-        RPE_VIDEO_QUALITY: parsedSet?.videoQuality || '30',
-        RPE_AUDIO_BITRATE: parsedSet?.audioBitrate || '320',
-        RPE_BEGIN: parsedSet?.begin || '0',
-        RPE_END: endSec,
-        RPE_ADD_OFFSET: parsedSet?.addOffset || '70',
-        // settings.txt 模板模式：render.bat 只重写谱面相关字段（file_dir/temp_dir/illustration/chart/audio/output_path）
-        RPE_USE_TEMPLATE: useTemplate ? '1' : '',
-      }
-      // 2.4 shader 处理：谱面带 extra.json 时 RPE Recorder 会弹窗询问——先问发起人（提前到 render.bat 前，避免等 render.bat 卡完才问）
-      if (files.extra) {
-        this.askShader(e, taskId)
-      }
+      const outName = String(songName).replace(/[\\/:*?<>|]/g, '_')
+      let endSec = (Number(getU('end_second')) > 0) ? getU('end_second') : (meta.Length || '180')
+      let st = fs.readFileSync(SETTINGS_TEMPLATE, 'utf-8')
+      const rep = (k, v) => { if (v !== null && v !== undefined && v !== '') st = st.replace(new RegExp(`^${k}:.*$`, 'm'), `${k}:${v}`) }
+      rep('chart_name', `${relFileDir}/${files.chart}`)
+      rep('audio_name', `${relFileDir}/${files.audio || ''}`)
+      rep('illustration_name', `${relFileDir}/${files.picture || ''}`)
+      rep('file_dir', relFileDir)
+      rep('temp_dir', relTempDir)
+      rep('output_path', `${RPE_DIR.replace(/\\/g, '/')}/${relOutDir}/${outName}.mp4`)
+      rep('end_second', endSec)
+      rep('begin_second', getU('begin_second') || parsedSet?.begin || '0')
+      rep('add_offset', getU('add_offset') || parsedSet?.addOffset || '70')
+      rep('title', songName)
+      rep('difficulty_text', meta.Level || 'IN Lv.1')
+      rep('compose', meta.Composer || '')
+      rep('chart', meta.Charter || '')
+      rep('fps', getU('fps') || parsedSet?.fps || '60')
+      rep('width', getU('width') || parsedSet?.width || '1620')
+      rep('height', getU('height') || parsedSet?.height || '1080')
+      rep('quality', getU('quality') || parsedSet?.videoQuality || '30')
+      rep('audio_bitrate', getU('audio_bitrate') || parsedSet?.audioBitrate || '320')
+      rep('opening', getU('opening') ?? '1')
+      rep('opening_duration', getU('opening_duration') ?? '5.8')
+      rep('ending', getU('ending') ?? '1')
+      rep('ending_duration', getU('ending_duration') ?? '6.0')
+      rep('back_dim', getU('back_dim') ?? '100')
+      rep('player_name', getU('player_name') || '')
+      rep('rks', getU('rks'))
+      rep('challenge', getU('challenge'))
+      rep('challenge_color', getU('challenge_color'))
+      fs.writeFileSync(rootSettings, st, 'utf-8')
+      logger.info(`[RPE] settings.txt 已按官方模板写入（任务 ${taskId}）`)
 
-      logger.info(`[RPE] 调用 render.bat: ${songName} / ${files.chart}（任务 ${taskId}）`)
-      const { stdout, stderr } = await execAsync(`cmd /c "${RENDER_BAT}"`, { cwd: RPE_DIR, env: batEnv, timeout: 30000 })
-      logger.info(`[RPE] render.bat 输出: ${(stdout || stderr).slice(0, 500)}`)
+      // 2.5 写入发起人 QQ 头像（head_sculpture）+ 昵称 + 兜底字段（opening/playing/back_dim）
+      await this.updatePlayerProfile(e, taskDir)
+
+      // 2.6 shader 弹窗处理（谱面带 extra.json 时 RPE Recorder 会弹窗询问）
+      if (files.extra) this.askShader(e, taskId)
+
+      // 2.7 直接 spawn RPE Recorder.exe -i settings.txt（官方 v3.1 支持 -i 传入设置并自动渲染，无需录制台）
+      logger.info(`[RPE] 启动 RPE Recorder.exe -i: ${songName}（任务 ${taskId}）`)
+      try {
+        const child = spawn(RPE_EXE, ['-i', rootSettings], { cwd: RPE_DIR, detached: true, stdio: 'ignore', windowsHide: true })
+        child.unref()
+      } catch (err) {
+        throw new Error(`启动 RPE Recorder 失败: ${err.message}`)
+      }
 
       // 3. 轮询任务 Output 目录（出现新 mp4 即完成）
       const beforeSnapshot = this.outputSnapshot(taskOutputDir)
