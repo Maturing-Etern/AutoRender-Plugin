@@ -21,7 +21,8 @@ const TEMP_DIR = path.join(RPE_DIR, 'temp')      // 临时目录
 const RENDER_BAT = path.join(RPE_DIR, 'render.bat')
 const RPE_EXE = path.join(RPE_DIR, 'RPE Recorder.exe')
 /** 官方完整 settings 模板（RPE -i 自动渲染必需完整字段）——渲染时读模板替换字段写根 settings.txt */
-const SETTINGS_TEMPLATE = path.join(__dirname, 'settings-template.txt')
+// 注意：不能用 __dirname/import.meta.url（Yunzai 插件加载环境差异），用绝对路径（与 RPE_DIR 一致）
+const SETTINGS_TEMPLATE = 'E:\\HugoMoveData\\User\\lenovo\\Downloads\\Yunzai-Bot\\plugins\\rpe-recorder\\settings-template.txt'
 
 /** 渲染超时（分钟） */
 const RENDER_TIMEOUT_MIN = 30
