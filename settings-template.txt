@@ -1,10 +1,10 @@
 渲染设置文件，由录制台生成。要供 RPE Recorder 使用，请确保文件名为 settings
-quiet:1
-file_dir:queue\1
-temp_dir:queue\1\temp
-illustration_name:queue\1\1992771518908265.jpeg
-chart_name:queue\1\1992771518908265.json
-audio_name:queue\1\1992771518908265.mp3
+quiet:0
+file_dir:file
+temp_dir:temp
+illustration_name:file\15368645.png
+chart_name:file\15368645.json
+audio_name:file\15368645.mp3
 fx_volume:0.7000
 music_volume:1.0000
 end_volume:0.8000
@@ -15,26 +15,26 @@ add_offset:70
 video_encoder:libx264
 quality:30
 audio_bitrate:320
-output_path:E:\HugoMoveData\User\lenovo\Downloads\RPE Recorder\Output\Moondread.mp4
+output_path:E:\HugoMoveData\User\lenovo\Downloads\RPE Recorder\Output\Successful Person (5).mp4
 note_size:175.0000
 back_dim:198
 fps:60
 width:1620
 height:1080
 begin_second:0.0000
-end_second:283.0400
+end_second:181.6300
 begin_cut:0
 end_cut:0
 full_score:1000000
-title:Moondread
-difficulty_text:AT  Lv.17
-level:17
+title:Successful Person
+difficulty_text:IN  Lv.16
+level:16
 level_super:
 level_sub:
-grade:AT
-compose:Kry.exe
-chart:Maturing+ vs. Korus_ vs. 小恩Saien
-illustration:UK
+grade:IN
+compose:Dio Deer
+chart:Korus_ & Saien_
+illustration:Dio Deer
 tip:Tip: 
 loading:Loading...
 watermark:
@@ -62,7 +62,7 @@ ending_duration:6.0000
 ending:0
 hardware_speedup:1
 speed_error:0.0001
-hold_bpm:530.0000
+hold_bpm:200.0000
 scale_rely:1
 length_rely:1
 linesize_rely:1
