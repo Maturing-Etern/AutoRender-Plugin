@@ -445,6 +445,11 @@ print(json.dumps(info, ensure_ascii=False))
       // 开场画面（opening:1 = 视频开头显示曲绘+歌名页）——缺省时 RPE 不开场，曲绘永远不显示
       if (!/^opening:/m.test(txt)) txt += '\nopening:1'
       if (!/^opening_duration:/m.test(txt)) txt += '\nopening_duration:5.8'
+      // 背景变暗兜底：back_dim >= 250（全黑）时自动调亮到 100——否则背景曲绘完全看不见
+      if (/^back_dim:\s*(2[5-9][0-9])\s*$/m.test(txt) || /^back_dim:\s*255\s*$/m.test(txt)) {
+        txt = txt.replace(/^back_dim:.*$/m, 'back_dim:100')
+        logger.info(`[RPE] back_dim 全黑(>=250)已自动调亮到 100（背景曲绘可见）`)
+      }
       fs.writeFileSync(settingsPath, txt, 'utf-8')
       logger.info(`[RPE] settings.txt 已写入 QQ 头像 + 默认昵称 + 开场曲绘（UTF-8）`)
     } catch (err) {
