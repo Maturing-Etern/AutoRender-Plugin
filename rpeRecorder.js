@@ -372,7 +372,8 @@ export class rpeRecorder extends plugin {
   async extractPez(pezPath, destDir) {
     // 用 python 解压（Windows 自带 zipfile）——写到临时 .py 再执行（cmd 里多行 -c 不可靠）
     // 注意：PATH 里 WindowsApps\python.exe 是 Microsoft Store 占位符（"Python was not found"），必须用绝对路径
-    const PY = 'C:/Users/lenovo/.workbuddy/binaries/python/versions/3.13.12/python.exe'
+    // 用用户装在 E:\py 的 python
+    const PY = 'E:/py/python.exe'
     const script = `
 import zipfile, sys, json
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
