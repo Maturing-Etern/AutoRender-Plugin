@@ -8,7 +8,7 @@ import plugin from '../../lib/plugins/plugin.js'
 import logger from './components/Logger.js'
 import fs from 'node:fs'
 import path from 'node:path'
-import { exec } from 'node:child_process'
+import { exec, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 
 const execAsync = promisify(exec)
